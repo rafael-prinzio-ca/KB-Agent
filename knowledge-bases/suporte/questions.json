@@ -1,0 +1,56 @@
+[
+  {
+    "id": 1,
+    "pergunta": "Qual foi a demanda total do Cami (autoatendimento) na semana W16, de 13 a 19 de abril de 2026?",
+    "resposta_esperada_valor": 8853,
+    "resposta_esperada_unidade": "count",
+    "esperava_encontrar": true,
+    "tolerancia_relativa": 0.02,
+    "_nota": "Validado na seção 7 da KB. Métrica documentada como SUM(sum_of_interactions) em dim_chatbot com bot_departament='Servir'."
+  },
+  {
+    "id": 2,
+    "pergunta": "Qual foi a demanda recebida no canal Telefone (humano) na semana W16, de 13 a 19 de abril de 2026, considerando apenas as áreas padrão de Atendimento (BK, DN, EC, SAC - CA, SAC - Pessoalize)?",
+    "resposta_esperada_valor": 1046,
+    "resposta_esperada_unidade": "count",
+    "esperava_encontrar": true,
+    "tolerancia_relativa": 0.02,
+    "_nota": "Validado na seção 7 da KB. fact_service_metrics com channel='Telefone' e filtro de área padrão."
+  },
+  {
+    "id": 3,
+    "pergunta": "Qual foi o CSAT Blended PME (avaliações humanas + Cami retidos) na semana W16, de 13 a 19 de abril de 2026? Responda como decimal entre 0 e 1.",
+    "resposta_esperada_valor": 0.864,
+    "resposta_esperada_unidade": "ratio",
+    "esperava_encontrar": true,
+    "tolerancia_relativa": 0.02,
+    "_nota": "Validado seção 7: 86,4%. Métrica documentada na Q3. Tolerância 2% absorve ±2pp."
+  },
+  {
+    "id": 4,
+    "pergunta": "Quantos atendimentos de Billing Dono de Negócio foram realizados no MTD de abril de 2026 (01 a 26 de abril de 2026)?",
+    "resposta_esperada_valor": 341,
+    "resposta_esperada_unidade": "count",
+    "esperava_encontrar": true,
+    "tolerancia_relativa": 0.03,
+    "_nota": "Validado seção 11. Query: dim_zendesk_tickets_detailed com assignee_area='BACKING_OPS' e ticket_category='billing dono de negócio'."
+  },
+  {
+    "id": 5,
+    "pergunta": "Qual foi o HC Líquido (média diária de encantadores ativos) do time Servir no MTD de abril de 2026 (01 a 26 de abril de 2026, considerando 18 dias úteis)?",
+    "resposta_esperada_valor": 54,
+    "resposta_esperada_unidade": "count",
+    "esperava_encontrar": true,
+    "tolerancia_relativa": 0.10,
+    "_nota": "Validado seção 7. Fórmula: SUM(is_active_workday) / 18 DU em silver_serve.agent_capacity com team='Servir'."
+  },
+  {
+    "id": 6,
+    "pergunta": "Qual foi o NPS médio dos clientes ContaAzul em abril de 2026?",
+    "resposta_esperada_valor": null,
+    "resposta_esperada_unidade": "",
+    "esperava_encontrar": false,
+    "tolerancia_relativa": 0.0,
+    "_nota": "Propositalmente fora do escopo. A KB não documenta tabela/métrica de NPS — só CSAT. Deve retornar encontrada=false."
+  }
+]

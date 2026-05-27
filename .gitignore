@@ -1,0 +1,14 @@
+# Histórico de avaliações gerado por /run-eval (não versionado)
+knowledge-bases/*/results/
+
+# Secrets
+.env
+
+# Instâncias dos MCPs geradas por setup-mcp.sh (sources em .claude-plugin/mcps/)
+mcp-*/
+
+# Clones de repos GitHub sincronizados por sync-repos.sh (fontes de código para KBs)
+repos/
+
+# OS
+.DS_Store

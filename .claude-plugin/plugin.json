@@ -1,0 +1,62 @@
+{
+  "name": "kb-manager",
+  "version": "0.4.0",
+  "description": "Manager de Knowledge Bases: /create-kb para construir/atualizar (sync de repos, build + questions em paralelo, champion-vs-candidate quando KB já existe) + /run-eval para avaliar uma KB pronta (kb-evaluator paralelo contra BigQuery, snapshot em results/). Question-creator NÃO lê kb.md — gera perguntas direto das fontes (Looker/Metabase), evitando 'alvo móvel'.",
+  "author": {
+    "name": "Tiago Lippi"
+  },
+  "license": "UNLICENSED",
+  "private": true,
+  "engines": {
+    "claude-code": ">=1.0.0"
+  },
+  "commands": [
+    {
+      "name": "create-kb",
+      "path": ".claude/commands/create-kb.md",
+      "description": "Cria ou atualiza uma KB. Sincroniza repos, coleta inputs (período + URLs Looker/Metabase + definições), dispara kb-builder + question-creator em paralelo (cada um chama os MCPs independente). Em KB com kb.md existente, gera kb-candidate.md, roda eval contra ambos com as mesmas questions e oferece promoção via diff. Uso: /create-kb <kb> [--regenerate-questions]"
+    },
+    {
+      "name": "run-eval",
+      "path": ".claude/commands/run-eval.md",
+      "description": "Avalia uma KB pronta — roda kb-evaluator paralelo (uma instância por pergunta) contra BigQuery, grava snapshot em results/. Requer kb.md e questions.json prévios (use /create-kb se não existirem). Uso: /run-eval <kb>"
+    }
+  ],
+  "agents": [
+    {
+      "name": "kb-evaluator",
+      "path": ".claude/agents/kb-evaluator.md",
+      "description": "Responde uma única pergunta quantitativa usando a KB embutida no prompt + execução de SQL no BigQuery somente leitura. Retorna JSON com valor, unidade, confiança e campos de prova (sql_executado, bytes_processed, job_id). Invocado em paralelo pelo /run-eval (avaliação canônica) e pelo /create-kb (avaliação champion-vs-candidate)."
+    },
+    {
+      "name": "kb-builder",
+      "path": ".claude/agents/kb-builder.md",
+      "description": "Compila knowledge-bases/<kb>/kb.md (ou kb-candidate.md) a partir de Looker/Metabase via MCPs locais + cross-reference com repos/ (LookML, Dataform SQLX) + DEFINITIONS opcionais. Recebe TARGET_PATH pré-determinado pelo orquestrador. Invocado pelo /create-kb."
+    },
+    {
+      "name": "question-creator",
+      "path": ".claude/agents/question-creator.md",
+      "description": "Gera knowledge-bases/<kb>/questions.json (5–10 perguntas quantitativas). Chama os MCPs Looker/Metabase DIRETAMENTE (independente do kb-builder) — NUNCA lê kb.md (anti 'alvo móvel'). Invocado pelo /create-kb apenas quando questions.json ainda não existe OU --regenerate-questions foi passado."
+    }
+  ],
+  "mcpServers": {
+    "bq_local": {
+      "description": "Servidor MCP stdio local que executa SQL no BigQuery em modo read-only via google-cloud-bigquery + ADC.",
+      "required": true,
+      "setup": "./setup-mcp.sh (lê BIGQUERY_PROJECT_ID do .env e instala em ~/.claude.json)"
+    },
+    "looker_local": {
+      "description": "Servidor MCP stdio local que lê dashboards, looks e explores do Looker via looker-sdk. Usado pelos agents kb-builder e question-creator (cada um chama de forma independente).",
+      "required": false,
+      "setup": "Preencha LOOKERSDK_BASE_URL, LOOKERSDK_CLIENT_ID, LOOKERSDK_CLIENT_SECRET no .env e rode ./setup-mcp.sh"
+    },
+    "metabase_local": {
+      "description": "Servidor MCP stdio local que lê questions, dashboards e database schemas do Metabase via REST API. Usado pelos agents kb-builder e question-creator (cada um chama de forma independente).",
+      "required": false,
+      "setup": "Preencha METABASE_URL e METABASE_API_KEY no .env e rode ./setup-mcp.sh"
+    }
+  },
+  "scripts": {
+    "install": "./setup-mcp.sh"
+  }
+}

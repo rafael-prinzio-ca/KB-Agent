@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./sync-repos.sh)",
+      "Bash(./sync-repos.sh:*)",
+      "Bash(gh auth status)",
+      "Bash(gh auth status:*)",
+      "Bash(gh repo clone:*)",
+      "Bash(gh repo view:*)",
+      "Bash(gh repo list:*)",
+      "Bash(git -C repos/*:*)",
+      "Bash(test -d repos/*)",
+      "Bash(test -e repos/*)",
+      "Bash(ls repos/*)",
+      "Bash(ls repos/)"
+    ]
+  }
+}
