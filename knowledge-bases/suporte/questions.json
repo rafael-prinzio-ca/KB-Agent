@@ -53,4 +53,16 @@
     "tolerancia_relativa": 0.0,
     "_nota": "Propositalmente fora do escopo. A KB não documenta tabela/métrica de NPS — só CSAT. Deve retornar encontrada=false."
   }
+
+ {
+    "id": 7,
+    "pergunta": "Qual foi o NPS médio dos clientes ContaAzul em maio de 2026?",
+    "resposta_esperada_valor": null,
+    "resposta_esperada_unidade": "",
+    "esperava_encontrar": false,
+    "tolerancia_relativa": 0.0,
+    "_nota": "Propositalmente fora do escopo. A KB não documenta tabela/métrica de NPS — só CSAT. Deve retornar encontrada=false."
+  }
+
+
 ]
