@@ -12,3 +12,6 @@ repos/
 
 # OS
 .DS_Store
+
+# Local settings com caminhos específicos da máquina
+.claude/settings.local.json
