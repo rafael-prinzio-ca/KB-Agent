@@ -1,6 +1,6 @@
 {
   "name": "kb-manager",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Manager de Knowledge Bases: /create-kb para construir/atualizar (sync de repos, build + questions em paralelo, champion-vs-candidate quando KB já existe) + /run-eval para avaliar uma KB pronta (kb-evaluator paralelo contra BigQuery, snapshot {meta,results} em results/ + _index.json) + /eval-report para histórico de qualidade (tabela + HTML standalone offline para gestores). Question-creator NÃO lê kb.md — gera perguntas direto das fontes (Looker/Metabase), evitando 'alvo móvel'.",
   "author": {
     "name": "Tiago Lippi"
@@ -41,7 +41,7 @@
     {
       "name": "question-creator",
       "path": ".claude/agents/question-creator.md",
-      "description": "Gera knowledge-bases/<kb>/questions.json (5–10 perguntas quantitativas). Chama os MCPs Looker/Metabase DIRETAMENTE (independente do kb-builder) — NUNCA lê kb.md (anti 'alvo móvel'). Invocado pelo /create-kb apenas quando questions.json ainda não existe OU --regenerate-questions foi passado."
+      "description": "Gera knowledge-bases/<kb>/questions.json com gabarito_sql (query canônica da verdade). Chama os MCPs Looker/Metabase DIRETAMENTE (extrai a SQL real dos tiles/questions) e valida cada gabarito_sql no BigQuery read-only antes de gravar — NUNCA lê kb.md (anti 'alvo móvel'). Invocado pelo /create-kb apenas quando questions.json ainda não existe OU --regenerate-questions foi passado."
     }
   ],
   "mcpServers": {
