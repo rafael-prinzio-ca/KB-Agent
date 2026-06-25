@@ -34,11 +34,13 @@ Sem sync de repos. Sem AskUserQuestion. Sem agents de build. Este command é del
 
 ## Passo 2 — Carregar inputs
 
-1. Leia `<KB_PATH>` em **2 chamadas Read sequenciais** (KBs podem exceder 25K tokens):
-   - `Read(file_path="<KB_PATH>", limit=650)` — primeira metade
-   - `Read(file_path="<KB_PATH>", offset=650)` — segunda metade
+1. Leia `<KB_PATH>` **integralmente**, guiando-se pela contagem real de linhas (KBs variam de tamanho por fonte de negócio — suporte, churn, etc. — e podem exceder 25K tokens). O número de chamadas **não é fixo**: depende do tamanho do `kb.md` desta run.
 
-   Concatene em `KB_CONTENT`.
+   a. Meça primeiro: `TOTAL_LINHAS = $(wc -l < "<KB_PATH>")` via Bash.
+   b. Leia em janelas sequenciais cobrindo de `offset=1` até `TOTAL_LINHAS`, ex.: `Read(limit=650)`, `Read(offset=650, limit=650)`, `Read(offset=1300, limit=650)`… **até atingir `TOTAL_LINHAS`**. Para a maioria das KBs (≤ ~1300 linhas) isso são 2 chamadas; KBs maiores exigem mais — nunca pare antes do EOF.
+   c. Concatene **todas** as janelas em `KB_CONTENT`, na ordem.
+
+   > **Anti-truncamento (invariante I2b — KB completa por avaliador).** A regra é genérica e dirigida pela contagem (`wc -l`), não por um número fixo de leituras: vale para a KB atual e para qualquer KB nova de tamanho desconhecido. Entregar KB **parcial** ao avaliador viola o I2b tão gravemente quanto recortá-la por pergunta — o avaliador isolado precisa do `kb.md` inteiro. **Nunca dispare os `kb-evaluator` com a KB truncada.**
 
 2. Leia `<QUESTIONS_PATH>` e parseie. Esperado: array de objetos com:
    - `id` (number), `pergunta` (string), `resposta_esperada_valor` (number | null), `resposta_esperada_unidade` (string), `esperava_encontrar` (boolean), `tolerancia_relativa` (number), `_nota` (string, ignorada).
@@ -231,8 +233,8 @@ Leia `<RESULTS_DIR>/_index.json` (já contém a entrada da run atual, appendada 
 ### 7.2 Checar alvo móvel
 
 Compare `questions_hash` da run atual com o do `BASELINE`:
-- **Diferentes** → as perguntas mudaram; comparar por `id` perde validade. Marque `ALVO_MOVEL = true`, **não** reporte regressão, pule 7.3.
-- **Iguais** → siga para 7.3.
+- **Diferentes, OU qualquer um == `"unknown"`** → as perguntas mudaram (ou não dá para provar que são as mesmas); comparar por `id` perde validade. Marque `ALVO_MOVEL = true`, **não** reporte regressão, pule 7.3. (Dois `"unknown"` **não** contam como "iguais" — hash ausente nunca autoriza comparação, mesmo critério do `/eval-report`.)
+- **Iguais e != `"unknown"`** → siga para 7.3.
 
 ### 7.3 Transições por pergunta
 

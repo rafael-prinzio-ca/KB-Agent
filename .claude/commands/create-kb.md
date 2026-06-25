@@ -221,11 +221,13 @@ Fim do command. Não roda eval automaticamente.
 ### 6a. Ler questions e KBs
 
 1. Leia `<QUESTIONS_PATH>` (1 Read) e parseie como array.
-2. Leia `<KB_PATH>` (champion) em 2 Reads sequenciais (KBs podem exceder 25K tokens):
-   - `Read(file_path="<KB_PATH>", limit=650)`
-   - `Read(file_path="<KB_PATH>", offset=650)`
-   Concatene em `KB_CONTENT_CHAMPION`.
-3. Leia `<CANDIDATE_PATH>` (candidate) em 2 Reads sequenciais. Concatene em `KB_CONTENT_CANDIDATE`.
+2. Leia `<KB_PATH>` (champion) **integralmente**, guiando-se pela contagem real de linhas (KBs variam de tamanho por fonte de negócio e podem exceder 25K tokens; o número de chamadas **não é fixo**):
+   a. `TOTAL_CHAMPION = $(wc -l < "<KB_PATH>")` via Bash.
+   b. Leia em janelas sequenciais de `offset=1` até `TOTAL_CHAMPION`, ex.: `Read(limit=650)`, `Read(offset=650, limit=650)`, `Read(offset=1300, limit=650)`… **até o EOF** — nunca pare antes de cobrir `TOTAL_CHAMPION`.
+   c. Concatene **todas** as janelas, na ordem, em `KB_CONTENT_CHAMPION`.
+3. Leia `<CANDIDATE_PATH>` (candidate) da mesma forma — meça `TOTAL_CANDIDATE = $(wc -l < "<CANDIDATE_PATH>")` e leia em janelas até o EOF. Concatene em `KB_CONTENT_CANDIDATE`.
+
+> **Anti-truncamento (invariante I2b — KB completa por avaliador).** Champion e candidate vão **inteiros** para os respectivos `kb-evaluator`. A leitura é dirigida pela contagem (`wc -l`), não por um número fixo de chamadas — vale para qualquer KB, de tamanho desconhecido. Entregar KB **parcial** ao avaliador viola o I2b tão gravemente quanto recortá-la por pergunta. **Nunca dispare os `kb-evaluator` com champion ou candidate truncado.**
 
 ### 6b. Disparar 2N kb-evaluator em paralelo
 
