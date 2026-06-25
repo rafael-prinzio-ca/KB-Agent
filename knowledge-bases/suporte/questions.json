@@ -1,68 +1,352 @@
 [
   {
     "id": 1,
-    "pergunta": "Qual foi a demanda total do Cami (autoatendimento) na semana W16, de 13 a 19 de abril de 2026?",
-    "resposta_esperada_valor": 8853,
+    "pergunta": "Qual foi a demanda recebida (total de contatos demandados) no período de 08 a 12 de junho de 2026, nas áreas BK, DN, EC, SAC - CA e SAC - Pessoalize, nos canais Chat, Email, Telefone, Web e Whatsapp?",
+    "gabarito_sql": "SELECT COALESCE(SUM(fact_service_metrics.count_of_demanded), 0) AS fact_service_metrics_sum_of_demanded FROM `gold_serve.fact_service_metrics` AS fact_service_metrics LEFT JOIN `contaazul-ssbi.gold_common.dim_date` AS dim_date ON fact_service_metrics.nk_event_date = dim_date.nk_date WHERE (fact_service_metrics.area) IN ('BK', 'DN', 'EC', 'SAC - CA', 'SAC - Pessoalize') AND (fact_service_metrics.channel) IN ('Chat', 'Email', 'Telefone', 'Web', 'Whatsapp') AND (((dim_date.nk_date) >= (DATE('2026-06-08')) AND (dim_date.nk_date) < (DATE('2026-06-13'))))",
     "resposta_esperada_unidade": "count",
     "esperava_encontrar": true,
-    "tolerancia_relativa": 0.02,
-    "_nota": "Validado na seção 7 da KB. Métrica documentada como SUM(sum_of_interactions) em dim_chatbot com bot_departament='Servir'."
+    "tolerancia_relativa": 0.05,
+    "_origem": "Notion: fact_service_metrics · SERVIR — #1 Demanda Recebida",
+    "_resultado_referencia_2026_06_24": 5248
   },
   {
     "id": 2,
-    "pergunta": "Qual foi a demanda recebida no canal Telefone (humano) na semana W16, de 13 a 19 de abril de 2026, considerando apenas as áreas padrão de Atendimento (BK, DN, EC, SAC - CA, SAC - Pessoalize)?",
-    "resposta_esperada_valor": 1046,
+    "pergunta": "Qual foi a demanda atendida total no período de 08 a 12 de junho de 2026, nas áreas BK, DN, EC, SAC - CA e SAC - Pessoalize, nos canais Chat, Email, Telefone, Web e Whatsapp?",
+    "gabarito_sql": "SELECT COALESCE(SUM(fact_service_metrics.count_of_attended), 0) AS fact_service_metrics_sum_of_attended FROM `gold_serve.fact_service_metrics` AS fact_service_metrics LEFT JOIN `contaazul-ssbi.gold_common.dim_date` AS dim_date ON fact_service_metrics.nk_event_date = dim_date.nk_date WHERE (fact_service_metrics.area) IN ('BK', 'DN', 'EC', 'SAC - CA', 'SAC - Pessoalize') AND (fact_service_metrics.channel) IN ('Chat', 'Email', 'Telefone', 'Web', 'Whatsapp') AND (((dim_date.nk_date) >= (DATE('2026-06-08')) AND (dim_date.nk_date) < (DATE('2026-06-13'))))",
     "resposta_esperada_unidade": "count",
     "esperava_encontrar": true,
-    "tolerancia_relativa": 0.02,
-    "_nota": "Validado na seção 7 da KB. fact_service_metrics com channel='Telefone' e filtro de área padrão."
+    "tolerancia_relativa": 0.05,
+    "_origem": "Notion: fact_service_metrics · SERVIR — #2 Demanda Atendida Total",
+    "_resultado_referencia_2026_06_24": 4990
   },
   {
     "id": 3,
-    "pergunta": "Qual foi o CSAT Blended PME (avaliações humanas + Cami retidos) na semana W16, de 13 a 19 de abril de 2026? Responda como decimal entre 0 e 1.",
-    "resposta_esperada_valor": 0.864,
-    "resposta_esperada_unidade": "ratio",
+    "pergunta": "Qual foi o total de abandonos no período de 08 a 12 de junho de 2026, nas áreas BK, DN, EC, SAC - CA e SAC - Pessoalize, nos canais Chat, Email, Telefone, Web e Whatsapp?",
+    "gabarito_sql": "SELECT COALESCE(SUM(fact_service_metrics.count_of_abandoned), 0) AS fact_service_metrics_sum_of_abandoned FROM `gold_serve.fact_service_metrics` AS fact_service_metrics LEFT JOIN `contaazul-ssbi.gold_common.dim_date` AS dim_date ON fact_service_metrics.nk_event_date = dim_date.nk_date WHERE (fact_service_metrics.area) IN ('BK', 'DN', 'EC', 'SAC - CA', 'SAC - Pessoalize') AND (fact_service_metrics.channel) IN ('Chat', 'Email', 'Telefone', 'Web', 'Whatsapp') AND (((dim_date.nk_date) >= (DATE('2026-06-08')) AND (dim_date.nk_date) < (DATE('2026-06-13'))))",
+    "resposta_esperada_unidade": "count",
     "esperava_encontrar": true,
-    "tolerancia_relativa": 0.02,
-    "_nota": "Validado seção 7: 86,4%. Métrica documentada na Q3. Tolerância 2% absorve ±2pp."
+    "tolerancia_relativa": 0.05,
+    "_origem": "Notion: fact_service_metrics · SERVIR — #3 Abandono Total",
+    "_resultado_referencia_2026_06_24": 258
   },
   {
     "id": 4,
-    "pergunta": "Quantos atendimentos de Billing Dono de Negócio foram realizados no MTD de abril de 2026 (01 a 26 de abril de 2026)?",
-    "resposta_esperada_valor": 341,
-    "resposta_esperada_unidade": "count",
+    "pergunta": "Qual foi o percentual de abandono geral (abandonos ÷ demanda recebida) no período de 08 a 12 de junho de 2026, nas áreas BK, DN, EC, SAC - CA e SAC - Pessoalize, nos canais Chat, Email, Telefone, Web e Whatsapp? Responda como decimal entre 0 e 1.",
+    "gabarito_sql": "SELECT COALESCE(SUM(fact_service_metrics.count_of_abandoned), 0) / NULLIF(COALESCE(SUM(fact_service_metrics.count_of_demanded), 0), 0) AS fact_service_metrics_percent_of_abandoned FROM `gold_serve.fact_service_metrics` AS fact_service_metrics LEFT JOIN `contaazul-ssbi.gold_common.dim_date` AS dim_date ON fact_service_metrics.nk_event_date = dim_date.nk_date WHERE (fact_service_metrics.area) IN ('BK', 'DN', 'EC', 'SAC - CA', 'SAC - Pessoalize') AND (fact_service_metrics.channel) IN ('Chat', 'Email', 'Telefone', 'Web', 'Whatsapp') AND (((dim_date.nk_date) >= (DATE('2026-06-08')) AND (dim_date.nk_date) < (DATE('2026-06-13'))))",
+    "resposta_esperada_unidade": "ratio",
     "esperava_encontrar": true,
-    "tolerancia_relativa": 0.03,
-    "_nota": "Validado seção 11. Query: dim_zendesk_tickets_detailed com assignee_area='BACKING_OPS' e ticket_category='billing dono de negócio'."
+    "tolerancia_relativa": 0.05,
+    "_origem": "Notion: fact_service_metrics · SERVIR — #4 % Abandono Geral",
+    "_resultado_referencia_2026_06_24": 0.0492
   },
   {
     "id": 5,
-    "pergunta": "Qual foi o HC Líquido (média diária de encantadores ativos) do time Servir no MTD de abril de 2026 (01 a 26 de abril de 2026, considerando 18 dias úteis)?",
-    "resposta_esperada_valor": 54,
-    "resposta_esperada_unidade": "count",
+    "pergunta": "Qual foi o tempo médio de espera (TME) geral, expresso em dias, no período de 08 a 12 de junho de 2026, nas áreas BK, DN, EC, SAC - CA e SAC - Pessoalize, considerando apenas os canais Whatsapp, Telefone e Chat?",
+    "gabarito_sql": "SELECT COALESCE(SUM(CASE WHEN (fact_service_metrics.channel IN ('Whatsapp', 'Telefone', 'Chat')) THEN fact_service_metrics.sum_of_te ELSE NULL END), 0) / NULLIF(COALESCE(SUM(CASE WHEN (fact_service_metrics.channel IN ('Whatsapp', 'Telefone', 'Chat')) THEN fact_service_metrics.count_of_demanded ELSE NULL END), 0), 0) / (24 * 60 * 60) AS fact_service_metrics_tme_days FROM `gold_serve.fact_service_metrics` AS fact_service_metrics LEFT JOIN `contaazul-ssbi.gold_common.dim_date` AS dim_date ON fact_service_metrics.nk_event_date = dim_date.nk_date WHERE (fact_service_metrics.area) IN ('BK', 'DN', 'EC', 'SAC - CA', 'SAC - Pessoalize') AND (fact_service_metrics.channel) IN ('Chat', 'Email', 'Telefone', 'Web', 'Whatsapp') AND (((dim_date.nk_date) >= (DATE('2026-06-08')) AND (dim_date.nk_date) < (DATE('2026-06-13'))))",
+    "resposta_esperada_unidade": "days",
     "esperava_encontrar": true,
-    "tolerancia_relativa": 0.10,
-    "_nota": "Validado seção 7. Fórmula: SUM(is_active_workday) / 18 DU em silver_serve.agent_capacity com team='Servir'."
+    "tolerancia_relativa": 0.05,
+    "_origem": "Notion: fact_service_metrics · SERVIR — #5 TME Geral",
+    "_resultado_referencia_2026_06_24": 0.000280944200001577
   },
   {
     "id": 6,
-    "pergunta": "Qual foi o NPS médio dos clientes ContaAzul em abril de 2026?",
-    "resposta_esperada_valor": null,
-    "resposta_esperada_unidade": "",
-    "esperava_encontrar": false,
-    "tolerancia_relativa": 0.0,
-    "_nota": "Propositalmente fora do escopo. A KB não documenta tabela/métrica de NPS — só CSAT. Deve retornar encontrada=false."
-  }
-
- {
+    "pergunta": "Qual foi o tempo médio de atendimento (TMA) geral, expresso em dias, no período de 08 a 12 de junho de 2026, nas áreas BK, DN, EC, SAC - CA e SAC - Pessoalize, considerando apenas os canais Whatsapp, Telefone e Chat?",
+    "gabarito_sql": "SELECT COALESCE(SUM(CASE WHEN (fact_service_metrics.channel IN ('Whatsapp', 'Telefone', 'Chat')) THEN fact_service_metrics.sum_of_ta ELSE NULL END), 0) / NULLIF(COALESCE(SUM(CASE WHEN (fact_service_metrics.channel IN ('Whatsapp', 'Telefone', 'Chat')) THEN fact_service_metrics.count_of_attended ELSE NULL END), 0), 0) / (24 * 60 * 60) AS fact_service_metrics_tma_days FROM `gold_serve.fact_service_metrics` AS fact_service_metrics LEFT JOIN `contaazul-ssbi.gold_common.dim_date` AS dim_date ON fact_service_metrics.nk_event_date = dim_date.nk_date WHERE (fact_service_metrics.area) IN ('BK', 'DN', 'EC', 'SAC - CA', 'SAC - Pessoalize') AND (fact_service_metrics.channel) IN ('Chat', 'Email', 'Telefone', 'Web', 'Whatsapp') AND (((dim_date.nk_date) >= (DATE('2026-06-08')) AND (dim_date.nk_date) < (DATE('2026-06-13'))))",
+    "resposta_esperada_unidade": "days",
+    "esperava_encontrar": true,
+    "tolerancia_relativa": 0.05,
+    "_origem": "Notion: fact_service_metrics · SERVIR — #6 TMA Geral",
+    "_resultado_referencia_2026_06_24": 0.026514464594127
+  },
+  {
     "id": 7,
-    "pergunta": "Qual foi o NPS médio dos clientes ContaAzul em maio de 2026?",
-    "resposta_esperada_valor": null,
-    "resposta_esperada_unidade": "",
-    "esperava_encontrar": false,
-    "tolerancia_relativa": 0.0,
-    "_nota": "Propositalmente fora do escopo. A KB não documenta tabela/métrica de NPS — só CSAT. Deve retornar encontrada=false."
+    "pergunta": "Qual foi o CSAT geral (avaliações positivas ÷ total de avaliações) no período de 08 a 12 de junho de 2026, nas áreas BK, DN, EC, SAC - CA e SAC - Pessoalize, nos canais Chat, Email, Telefone, Web e Whatsapp? Responda como decimal entre 0 e 1.",
+    "gabarito_sql": "SELECT COALESCE(SUM(fact_service_metrics.count_of_positive_ratings), 0) / NULLIF(COALESCE(SUM(fact_service_metrics.count_of_positive_ratings), 0) + COALESCE(SUM(fact_service_metrics.count_of_negative_ratings), 0), 0) AS fact_service_metrics_csat FROM `gold_serve.fact_service_metrics` AS fact_service_metrics LEFT JOIN `contaazul-ssbi.gold_common.dim_date` AS dim_date ON fact_service_metrics.nk_event_date = dim_date.nk_date WHERE (fact_service_metrics.area) IN ('BK', 'DN', 'EC', 'SAC - CA', 'SAC - Pessoalize') AND (fact_service_metrics.channel) IN ('Chat', 'Email', 'Telefone', 'Web', 'Whatsapp') AND (((dim_date.nk_date) >= (DATE('2026-06-08')) AND (dim_date.nk_date) < (DATE('2026-06-13'))))",
+    "resposta_esperada_unidade": "ratio",
+    "esperava_encontrar": true,
+    "tolerancia_relativa": 0.05,
+    "_origem": "Notion: fact_service_metrics · SERVIR — #7 CSAT Geral",
+    "_resultado_referencia_2026_06_24": 0.9363
+  },
+  {
+    "id": 8,
+    "pergunta": "Qual foi o percentual de avaliação (total de avaliações ÷ demanda atendida) no período de 08 a 12 de junho de 2026, nas áreas BK, DN, EC, SAC - CA e SAC - Pessoalize, nos canais Chat, Email, Telefone, Web e Whatsapp? Responda como decimal entre 0 e 1.",
+    "gabarito_sql": "SELECT (COALESCE(SUM(fact_service_metrics.count_of_positive_ratings), 0) + COALESCE(SUM(fact_service_metrics.count_of_negative_ratings), 0)) / NULLIF(COALESCE(SUM(fact_service_metrics.count_of_attended), 0), 0) AS fact_service_metrics_percent_of_avaliation FROM `gold_serve.fact_service_metrics` AS fact_service_metrics LEFT JOIN `contaazul-ssbi.gold_common.dim_date` AS dim_date ON fact_service_metrics.nk_event_date = dim_date.nk_date WHERE (fact_service_metrics.area) IN ('BK', 'DN', 'EC', 'SAC - CA', 'SAC - Pessoalize') AND (fact_service_metrics.channel) IN ('Chat', 'Email', 'Telefone', 'Web', 'Whatsapp') AND (((dim_date.nk_date) >= (DATE('2026-06-08')) AND (dim_date.nk_date) < (DATE('2026-06-13'))))",
+    "resposta_esperada_unidade": "ratio",
+    "esperava_encontrar": true,
+    "tolerancia_relativa": 0.05,
+    "_origem": "Notion: fact_service_metrics · SERVIR — #8 % Avaliação",
+    "_resultado_referencia_2026_06_24": 0.3018
+  },
+  {
+    "id": 9,
+    "pergunta": "Quantas avaliações positivas houve no período de 08 a 12 de junho de 2026, nas áreas BK, DN, EC, SAC - CA e SAC - Pessoalize, nos canais Chat, Email, Telefone, Web e Whatsapp?",
+    "gabarito_sql": "SELECT COALESCE(SUM(fact_service_metrics.count_of_positive_ratings), 0) AS fact_service_metrics_sum_of_positive_ratings FROM `gold_serve.fact_service_metrics` AS fact_service_metrics LEFT JOIN `contaazul-ssbi.gold_common.dim_date` AS dim_date ON fact_service_metrics.nk_event_date = dim_date.nk_date WHERE (fact_service_metrics.area) IN ('BK', 'DN', 'EC', 'SAC - CA', 'SAC - Pessoalize') AND (fact_service_metrics.channel) IN ('Chat', 'Email', 'Telefone', 'Web', 'Whatsapp') AND (((dim_date.nk_date) >= (DATE('2026-06-08')) AND (dim_date.nk_date) < (DATE('2026-06-13'))))",
+    "resposta_esperada_unidade": "count",
+    "esperava_encontrar": true,
+    "tolerancia_relativa": 0.05,
+    "_origem": "Notion: fact_service_metrics · SERVIR — #9 Avaliações Positivas",
+    "_resultado_referencia_2026_06_24": 1410
+  },
+  {
+    "id": 10,
+    "pergunta": "Quantas avaliações negativas houve no período de 08 a 12 de junho de 2026, nas áreas BK, DN, EC, SAC - CA e SAC - Pessoalize, nos canais Chat, Email, Telefone, Web e Whatsapp?",
+    "gabarito_sql": "SELECT COALESCE(SUM(fact_service_metrics.count_of_negative_ratings), 0) AS fact_service_metrics_sum_of_negative_ratings FROM `gold_serve.fact_service_metrics` AS fact_service_metrics LEFT JOIN `contaazul-ssbi.gold_common.dim_date` AS dim_date ON fact_service_metrics.nk_event_date = dim_date.nk_date WHERE (fact_service_metrics.area) IN ('BK', 'DN', 'EC', 'SAC - CA', 'SAC - Pessoalize') AND (fact_service_metrics.channel) IN ('Chat', 'Email', 'Telefone', 'Web', 'Whatsapp') AND (((dim_date.nk_date) >= (DATE('2026-06-08')) AND (dim_date.nk_date) < (DATE('2026-06-13'))))",
+    "resposta_esperada_unidade": "count",
+    "esperava_encontrar": true,
+    "tolerancia_relativa": 0.05,
+    "_origem": "Notion: fact_service_metrics · SERVIR — #9 Avaliações Negativas",
+    "_resultado_referencia_2026_06_24": 96
+  },
+  {
+    "id": 11,
+    "pergunta": "Qual foi a demanda recebida (total de contatos demandados) no período de 08 a 12 de junho de 2026, na área RT (Retenção), nos canais Chat, Email, Telefone, Web e Whatsapp?",
+    "gabarito_sql": "SELECT COALESCE(SUM(fact_service_metrics.count_of_demanded), 0) AS fact_service_metrics_sum_of_demanded FROM `gold_serve.fact_service_metrics` AS fact_service_metrics LEFT JOIN `contaazul-ssbi.gold_common.dim_date` AS dim_date ON fact_service_metrics.nk_event_date = dim_date.nk_date WHERE (fact_service_metrics.area) = 'RT' AND (fact_service_metrics.channel) IN ('Chat', 'Email', 'Telefone', 'Web', 'Whatsapp') AND (((dim_date.nk_date) >= (DATE('2026-06-08')) AND (dim_date.nk_date) < (DATE('2026-06-13'))))",
+    "resposta_esperada_unidade": "count",
+    "esperava_encontrar": true,
+    "tolerancia_relativa": 0.05,
+    "_origem": "Notion: fact_service_metrics · RETENÇÃO — #1 Demanda Recebida",
+    "_resultado_referencia_2026_06_24": 1214
+  },
+  {
+    "id": 12,
+    "pergunta": "Qual foi a demanda atendida total no período de 08 a 12 de junho de 2026, na área RT (Retenção), nos canais Chat, Email, Telefone, Web e Whatsapp?",
+    "gabarito_sql": "SELECT COALESCE(SUM(fact_service_metrics.count_of_attended), 0) AS fact_service_metrics_sum_of_attended FROM `gold_serve.fact_service_metrics` AS fact_service_metrics LEFT JOIN `contaazul-ssbi.gold_common.dim_date` AS dim_date ON fact_service_metrics.nk_event_date = dim_date.nk_date WHERE (fact_service_metrics.area) = 'RT' AND (fact_service_metrics.channel) IN ('Chat', 'Email', 'Telefone', 'Web', 'Whatsapp') AND (((dim_date.nk_date) >= (DATE('2026-06-08')) AND (dim_date.nk_date) < (DATE('2026-06-13'))))",
+    "resposta_esperada_unidade": "count",
+    "esperava_encontrar": true,
+    "tolerancia_relativa": 0.05,
+    "_origem": "Notion: fact_service_metrics · RETENÇÃO — #2 Demanda Atendida Total",
+    "_resultado_referencia_2026_06_24": 1148
+  },
+  {
+    "id": 13,
+    "pergunta": "Qual foi o total de abandonos no período de 08 a 12 de junho de 2026, na área RT (Retenção), nos canais Chat, Email, Telefone, Web e Whatsapp?",
+    "gabarito_sql": "SELECT COALESCE(SUM(fact_service_metrics.count_of_abandoned), 0) AS fact_service_metrics_sum_of_abandoned FROM `gold_serve.fact_service_metrics` AS fact_service_metrics LEFT JOIN `contaazul-ssbi.gold_common.dim_date` AS dim_date ON fact_service_metrics.nk_event_date = dim_date.nk_date WHERE (fact_service_metrics.area) = 'RT' AND (fact_service_metrics.channel) IN ('Chat', 'Email', 'Telefone', 'Web', 'Whatsapp') AND (((dim_date.nk_date) >= (DATE('2026-06-08')) AND (dim_date.nk_date) < (DATE('2026-06-13'))))",
+    "resposta_esperada_unidade": "count",
+    "esperava_encontrar": true,
+    "tolerancia_relativa": 0.05,
+    "_origem": "Notion: fact_service_metrics · RETENÇÃO — #3 Abandono Total",
+    "_resultado_referencia_2026_06_24": 66
+  },
+  {
+    "id": 14,
+    "pergunta": "Qual foi o percentual de abandono geral (abandonos ÷ demanda recebida) no período de 08 a 12 de junho de 2026, na área RT (Retenção), nos canais Chat, Email, Telefone, Web e Whatsapp? Responda como decimal entre 0 e 1.",
+    "gabarito_sql": "SELECT COALESCE(SUM(fact_service_metrics.count_of_abandoned), 0) / NULLIF(COALESCE(SUM(fact_service_metrics.count_of_demanded), 0), 0) AS fact_service_metrics_percent_of_abandoned FROM `gold_serve.fact_service_metrics` AS fact_service_metrics LEFT JOIN `contaazul-ssbi.gold_common.dim_date` AS dim_date ON fact_service_metrics.nk_event_date = dim_date.nk_date WHERE (fact_service_metrics.area) = 'RT' AND (fact_service_metrics.channel) IN ('Chat', 'Email', 'Telefone', 'Web', 'Whatsapp') AND (((dim_date.nk_date) >= (DATE('2026-06-08')) AND (dim_date.nk_date) < (DATE('2026-06-13'))))",
+    "resposta_esperada_unidade": "ratio",
+    "esperava_encontrar": true,
+    "tolerancia_relativa": 0.05,
+    "_origem": "Notion: fact_service_metrics · RETENÇÃO — #4 % Abandono Geral",
+    "_resultado_referencia_2026_06_24": 0.0544
+  },
+  {
+    "id": 15,
+    "pergunta": "Qual foi o tempo médio de espera (TME) geral, expresso em dias, no período de 08 a 12 de junho de 2026, na área RT (Retenção), considerando apenas os canais Whatsapp, Telefone e Chat?",
+    "gabarito_sql": "SELECT COALESCE(SUM(CASE WHEN (fact_service_metrics.channel IN ('Whatsapp', 'Telefone', 'Chat')) THEN fact_service_metrics.sum_of_te ELSE NULL END), 0) / NULLIF(COALESCE(SUM(CASE WHEN (fact_service_metrics.channel IN ('Whatsapp', 'Telefone', 'Chat')) THEN fact_service_metrics.count_of_demanded ELSE NULL END), 0), 0) / (24 * 60 * 60) AS fact_service_metrics_tme_days FROM `gold_serve.fact_service_metrics` AS fact_service_metrics LEFT JOIN `contaazul-ssbi.gold_common.dim_date` AS dim_date ON fact_service_metrics.nk_event_date = dim_date.nk_date WHERE (fact_service_metrics.area) = 'RT' AND (fact_service_metrics.channel) IN ('Chat', 'Email', 'Telefone', 'Web', 'Whatsapp') AND (((dim_date.nk_date) >= (DATE('2026-06-08')) AND (dim_date.nk_date) < (DATE('2026-06-13'))))",
+    "resposta_esperada_unidade": "days",
+    "esperava_encontrar": true,
+    "tolerancia_relativa": 0.05,
+    "_origem": "Notion: fact_service_metrics · RETENÇÃO — #5 TME Geral",
+    "_resultado_referencia_2026_06_24": 0.00016645685432832536
+  },
+  {
+    "id": 16,
+    "pergunta": "Qual foi o tempo médio de atendimento (TMA) geral, expresso em dias, no período de 08 a 12 de junho de 2026, na área RT (Retenção), considerando apenas os canais Whatsapp, Telefone e Chat?",
+    "gabarito_sql": "SELECT COALESCE(SUM(CASE WHEN (fact_service_metrics.channel IN ('Whatsapp', 'Telefone', 'Chat')) THEN fact_service_metrics.sum_of_ta ELSE NULL END), 0) / NULLIF(COALESCE(SUM(CASE WHEN (fact_service_metrics.channel IN ('Whatsapp', 'Telefone', 'Chat')) THEN fact_service_metrics.count_of_attended ELSE NULL END), 0), 0) / (24 * 60 * 60) AS fact_service_metrics_tma_days FROM `gold_serve.fact_service_metrics` AS fact_service_metrics LEFT JOIN `contaazul-ssbi.gold_common.dim_date` AS dim_date ON fact_service_metrics.nk_event_date = dim_date.nk_date WHERE (fact_service_metrics.area) = 'RT' AND (fact_service_metrics.channel) IN ('Chat', 'Email', 'Telefone', 'Web', 'Whatsapp') AND (((dim_date.nk_date) >= (DATE('2026-06-08')) AND (dim_date.nk_date) < (DATE('2026-06-13'))))",
+    "resposta_esperada_unidade": "days",
+    "esperava_encontrar": true,
+    "tolerancia_relativa": 0.05,
+    "_origem": "Notion: fact_service_metrics · RETENÇÃO — #6 TMA Geral",
+    "_resultado_referencia_2026_06_24": 0.026384446122399166
+  },
+  {
+    "id": 17,
+    "pergunta": "Qual foi o CSAT geral (avaliações positivas ÷ total de avaliações) no período de 08 a 12 de junho de 2026, na área RT (Retenção), nos canais Chat, Email, Telefone, Web e Whatsapp? Responda como decimal entre 0 e 1.",
+    "gabarito_sql": "SELECT COALESCE(SUM(fact_service_metrics.count_of_positive_ratings), 0) / NULLIF(COALESCE(SUM(fact_service_metrics.count_of_positive_ratings), 0) + COALESCE(SUM(fact_service_metrics.count_of_negative_ratings), 0), 0) AS fact_service_metrics_csat FROM `gold_serve.fact_service_metrics` AS fact_service_metrics LEFT JOIN `contaazul-ssbi.gold_common.dim_date` AS dim_date ON fact_service_metrics.nk_event_date = dim_date.nk_date WHERE (fact_service_metrics.area) = 'RT' AND (fact_service_metrics.channel) IN ('Chat', 'Email', 'Telefone', 'Web', 'Whatsapp') AND (((dim_date.nk_date) >= (DATE('2026-06-08')) AND (dim_date.nk_date) < (DATE('2026-06-13'))))",
+    "resposta_esperada_unidade": "ratio",
+    "esperava_encontrar": true,
+    "tolerancia_relativa": 0.05,
+    "_origem": "Notion: fact_service_metrics · RETENÇÃO — #7 CSAT Geral",
+    "_resultado_referencia_2026_06_24": 0.9058
+  },
+  {
+    "id": 18,
+    "pergunta": "Qual foi o percentual de avaliação (total de avaliações ÷ demanda atendida) no período de 08 a 12 de junho de 2026, na área RT (Retenção), nos canais Chat, Email, Telefone, Web e Whatsapp? Responda como decimal entre 0 e 1.",
+    "gabarito_sql": "SELECT (COALESCE(SUM(fact_service_metrics.count_of_positive_ratings), 0) + COALESCE(SUM(fact_service_metrics.count_of_negative_ratings), 0)) / NULLIF(COALESCE(SUM(fact_service_metrics.count_of_attended), 0), 0) AS fact_service_metrics_percent_of_avaliation FROM `gold_serve.fact_service_metrics` AS fact_service_metrics LEFT JOIN `contaazul-ssbi.gold_common.dim_date` AS dim_date ON fact_service_metrics.nk_event_date = dim_date.nk_date WHERE (fact_service_metrics.area) = 'RT' AND (fact_service_metrics.channel) IN ('Chat', 'Email', 'Telefone', 'Web', 'Whatsapp') AND (((dim_date.nk_date) >= (DATE('2026-06-08')) AND (dim_date.nk_date) < (DATE('2026-06-13'))))",
+    "resposta_esperada_unidade": "ratio",
+    "esperava_encontrar": true,
+    "tolerancia_relativa": 0.05,
+    "_origem": "Notion: fact_service_metrics · RETENÇÃO — #8 % Avaliação",
+    "_resultado_referencia_2026_06_24": 0.1943
+  },
+  {
+    "id": 19,
+    "pergunta": "Quantas avaliações positivas houve no período de 08 a 12 de junho de 2026, na área RT (Retenção), nos canais Chat, Email, Telefone, Web e Whatsapp?",
+    "gabarito_sql": "SELECT COALESCE(SUM(fact_service_metrics.count_of_positive_ratings), 0) AS fact_service_metrics_sum_of_positive_ratings FROM `gold_serve.fact_service_metrics` AS fact_service_metrics LEFT JOIN `contaazul-ssbi.gold_common.dim_date` AS dim_date ON fact_service_metrics.nk_event_date = dim_date.nk_date WHERE (fact_service_metrics.area) = 'RT' AND (fact_service_metrics.channel) IN ('Chat', 'Email', 'Telefone', 'Web', 'Whatsapp') AND (((dim_date.nk_date) >= (DATE('2026-06-08')) AND (dim_date.nk_date) < (DATE('2026-06-13'))))",
+    "resposta_esperada_unidade": "count",
+    "esperava_encontrar": true,
+    "tolerancia_relativa": 0.05,
+    "_origem": "Notion: fact_service_metrics · RETENÇÃO — #9 Avaliações Positivas",
+    "_resultado_referencia_2026_06_24": 202
+  },
+  {
+    "id": 20,
+    "pergunta": "Quantas avaliações negativas houve no período de 08 a 12 de junho de 2026, na área RT (Retenção), nos canais Chat, Email, Telefone, Web e Whatsapp?",
+    "gabarito_sql": "SELECT COALESCE(SUM(fact_service_metrics.count_of_negative_ratings), 0) AS fact_service_metrics_sum_of_negative_ratings FROM `gold_serve.fact_service_metrics` AS fact_service_metrics LEFT JOIN `contaazul-ssbi.gold_common.dim_date` AS dim_date ON fact_service_metrics.nk_event_date = dim_date.nk_date WHERE (fact_service_metrics.area) = 'RT' AND (fact_service_metrics.channel) IN ('Chat', 'Email', 'Telefone', 'Web', 'Whatsapp') AND (((dim_date.nk_date) >= (DATE('2026-06-08')) AND (dim_date.nk_date) < (DATE('2026-06-13'))))",
+    "resposta_esperada_unidade": "count",
+    "esperava_encontrar": true,
+    "tolerancia_relativa": 0.05,
+    "_origem": "Notion: fact_service_metrics · RETENÇÃO — #9 Avaliações Negativas",
+    "_resultado_referencia_2026_06_24": 21
+  },
+  {
+    "id": 21,
+    "pergunta": "Qual foi a demanda recebida pelo chatbot (total de interações) no período de 08 a 12 de junho de 2026, no departamento Servir, nos canais Chat, Web e Whatsapp?",
+    "gabarito_sql": "SELECT COALESCE(SUM(dim_chatbot.sum_of_interactions), 0) AS dim_chatbot_count_of_interactions FROM `gold_serve.dim_chatbot` AS dim_chatbot LEFT JOIN `contaazul-ssbi.gold_common.dim_date` AS dim_date ON dim_chatbot.nk_date = dim_date.nk_date WHERE (dim_chatbot.channel) IN ('Chat', 'Web', 'Whatsapp') AND (dim_chatbot.bot_departament) = 'Servir' AND (((dim_date.nk_date) >= (DATE('2026-06-08')) AND (dim_date.nk_date) < (DATE('2026-06-13'))))",
+    "resposta_esperada_unidade": "count",
+    "esperava_encontrar": true,
+    "tolerancia_relativa": 0.05,
+    "_origem": "Notion: dim_chatbot · SERVIR — #1 Demanda Recebida",
+    "_resultado_referencia_2026_06_24": 8249
+  },
+  {
+    "id": 22,
+    "pergunta": "Qual foi o total de transbordos do chatbot no período de 08 a 12 de junho de 2026, no departamento Servir, nos canais Chat, Web e Whatsapp?",
+    "gabarito_sql": "SELECT COALESCE(SUM(dim_chatbot.sum_of_transfers), 0) AS dim_chatbot_count_of_transfers FROM `gold_serve.dim_chatbot` AS dim_chatbot LEFT JOIN `contaazul-ssbi.gold_common.dim_date` AS dim_date ON dim_chatbot.nk_date = dim_date.nk_date WHERE (dim_chatbot.channel) IN ('Chat', 'Web', 'Whatsapp') AND (dim_chatbot.bot_departament) = 'Servir' AND (((dim_date.nk_date) >= (DATE('2026-06-08')) AND (dim_date.nk_date) < (DATE('2026-06-13'))))",
+    "resposta_esperada_unidade": "count",
+    "esperava_encontrar": true,
+    "tolerancia_relativa": 0.05,
+    "_origem": "Notion: dim_chatbot · SERVIR — #2 Transbordos",
+    "_resultado_referencia_2026_06_24": 3767
+  },
+  {
+    "id": 23,
+    "pergunta": "Qual foi o percentual de demandas avaliadas (total de avaliações ÷ total de interações) do chatbot no período de 08 a 12 de junho de 2026, no departamento Servir, nos canais Chat, Web e Whatsapp? Responda como decimal entre 0 e 1.",
+    "gabarito_sql": "SELECT COALESCE(SUM(dim_chatbot.sum_of_total_ratings), 0) / NULLIF(COALESCE(SUM(dim_chatbot.sum_of_interactions), 0), 0) AS dim_chatbot_rated_demands FROM `gold_serve.dim_chatbot` AS dim_chatbot LEFT JOIN `contaazul-ssbi.gold_common.dim_date` AS dim_date ON dim_chatbot.nk_date = dim_date.nk_date WHERE (dim_chatbot.channel) IN ('Chat', 'Web', 'Whatsapp') AND (dim_chatbot.bot_departament) = 'Servir' AND (((dim_date.nk_date) >= (DATE('2026-06-08')) AND (dim_date.nk_date) < (DATE('2026-06-13'))))",
+    "resposta_esperada_unidade": "ratio",
+    "esperava_encontrar": true,
+    "tolerancia_relativa": 0.05,
+    "_origem": "Notion: dim_chatbot · SERVIR — #3 Demandas Avaliadas",
+    "_resultado_referencia_2026_06_24": 0.0674
+  },
+  {
+    "id": 24,
+    "pergunta": "Qual foi o CSAT do chatbot (avaliações positivas ÷ total de avaliações) no período de 08 a 12 de junho de 2026, no departamento Servir, nos canais Chat, Web e Whatsapp? Responda como decimal entre 0 e 1.",
+    "gabarito_sql": "SELECT COALESCE(SUM(dim_chatbot.sum_of_positive_ratings), 0) / NULLIF(COALESCE(SUM(dim_chatbot.sum_of_total_ratings), 0), 0) AS dim_chatbot_csat FROM `gold_serve.dim_chatbot` AS dim_chatbot LEFT JOIN `contaazul-ssbi.gold_common.dim_date` AS dim_date ON dim_chatbot.nk_date = dim_date.nk_date WHERE (dim_chatbot.channel) IN ('Chat', 'Web', 'Whatsapp') AND (dim_chatbot.bot_departament) = 'Servir' AND (((dim_date.nk_date) >= (DATE('2026-06-08')) AND (dim_date.nk_date) < (DATE('2026-06-13'))))",
+    "resposta_esperada_unidade": "ratio",
+    "esperava_encontrar": true,
+    "tolerancia_relativa": 0.05,
+    "_origem": "Notion: dim_chatbot · SERVIR — #4 CSAT",
+    "_resultado_referencia_2026_06_24": 0.7428
+  },
+  {
+    "id": 25,
+    "pergunta": "Quantas avaliações positivas o chatbot recebeu no período de 08 a 12 de junho de 2026, no departamento Servir, nos canais Chat, Web e Whatsapp?",
+    "gabarito_sql": "SELECT COALESCE(SUM(dim_chatbot.sum_of_positive_ratings), 0) AS dim_chatbot_count_of_positive_ratings FROM `gold_serve.dim_chatbot` AS dim_chatbot LEFT JOIN `contaazul-ssbi.gold_common.dim_date` AS dim_date ON dim_chatbot.nk_date = dim_date.nk_date WHERE (dim_chatbot.channel) IN ('Chat', 'Web', 'Whatsapp') AND (dim_chatbot.bot_departament) = 'Servir' AND (((dim_date.nk_date) >= (DATE('2026-06-08')) AND (dim_date.nk_date) < (DATE('2026-06-13'))))",
+    "resposta_esperada_unidade": "count",
+    "esperava_encontrar": true,
+    "tolerancia_relativa": 0.05,
+    "_origem": "Notion: dim_chatbot · SERVIR — #5 Avaliações Positivas",
+    "_resultado_referencia_2026_06_24": 413
+  },
+  {
+    "id": 26,
+    "pergunta": "Quantas avaliações negativas o chatbot recebeu no período de 08 a 12 de junho de 2026, no departamento Servir, nos canais Chat, Web e Whatsapp?",
+    "gabarito_sql": "SELECT COALESCE(SUM(dim_chatbot.sum_of_negative_ratings), 0) AS dim_chatbot_count_of_negative_ratings FROM `gold_serve.dim_chatbot` AS dim_chatbot LEFT JOIN `contaazul-ssbi.gold_common.dim_date` AS dim_date ON dim_chatbot.nk_date = dim_date.nk_date WHERE (dim_chatbot.channel) IN ('Chat', 'Web', 'Whatsapp') AND (dim_chatbot.bot_departament) = 'Servir' AND (((dim_date.nk_date) >= (DATE('2026-06-08')) AND (dim_date.nk_date) < (DATE('2026-06-13'))))",
+    "resposta_esperada_unidade": "count",
+    "esperava_encontrar": true,
+    "tolerancia_relativa": 0.05,
+    "_origem": "Notion: dim_chatbot · SERVIR — #6 Avaliações Negativas",
+    "_resultado_referencia_2026_06_24": 143
+  },
+  {
+    "id": 27,
+    "pergunta": "Qual foi a taxa de retenção do chatbot (1 menos a razão entre transbordos e interações) no período de 08 a 12 de junho de 2026, no departamento Servir, nos canais Chat, Web e Whatsapp? Responda como decimal entre 0 e 1.",
+    "gabarito_sql": "SELECT GREATEST(1 - COALESCE(SUM(dim_chatbot.sum_of_transfers), 0) / NULLIF(COALESCE(SUM(dim_chatbot.sum_of_interactions), 0), 0), 0) AS dim_chatbot_pct_retention FROM `gold_serve.dim_chatbot` AS dim_chatbot LEFT JOIN `contaazul-ssbi.gold_common.dim_date` AS dim_date ON dim_chatbot.nk_date = dim_date.nk_date WHERE (dim_chatbot.channel) IN ('Chat', 'Web', 'Whatsapp') AND (dim_chatbot.bot_departament) = 'Servir' AND (((dim_date.nk_date) >= (DATE('2026-06-08')) AND (dim_date.nk_date) < (DATE('2026-06-13'))))",
+    "resposta_esperada_unidade": "ratio",
+    "esperava_encontrar": true,
+    "tolerancia_relativa": 0.05,
+    "_origem": "Notion: dim_chatbot · SERVIR — #7 Retenção",
+    "_resultado_referencia_2026_06_24": 0.5433
+  },
+  {
+    "id": 28,
+    "pergunta": "Quantos contatos únicos (clientes distintos) o chatbot atendeu no período de 08 a 12 de junho de 2026, no departamento Servir, nos canais Chat, Web e Whatsapp?",
+    "gabarito_sql": "SELECT COUNT(DISTINCT CONCAT(dim_chatbot.nk_company_id, dim_chatbot.nk_accountancy_id)) AS dim_chatbot_count_of_distinct_customers FROM `gold_serve.dim_chatbot` AS dim_chatbot LEFT JOIN `contaazul-ssbi.gold_common.dim_date` AS dim_date ON dim_chatbot.nk_date = dim_date.nk_date WHERE (dim_chatbot.channel) IN ('Chat', 'Web', 'Whatsapp') AND (dim_chatbot.bot_departament) = 'Servir' AND (((dim_date.nk_date) >= (DATE('2026-06-08')) AND (dim_date.nk_date) < (DATE('2026-06-13'))))",
+    "resposta_esperada_unidade": "count",
+    "esperava_encontrar": true,
+    "tolerancia_relativa": 0.05,
+    "_origem": "Notion: dim_chatbot · SERVIR — #8 Contatos Únicos",
+    "_resultado_referencia_2026_06_24": 4060
+  },
+  {
+    "id": 29,
+    "pergunta": "Qual foi a demanda recebida pelo chatbot (total de interações) no período de 08 a 12 de junho de 2026, no departamento Retenção, nos canais Chat, Web e Whatsapp?",
+    "gabarito_sql": "SELECT COALESCE(SUM(dim_chatbot.sum_of_interactions), 0) AS dim_chatbot_count_of_interactions FROM `gold_serve.dim_chatbot` AS dim_chatbot LEFT JOIN `contaazul-ssbi.gold_common.dim_date` AS dim_date ON dim_chatbot.nk_date = dim_date.nk_date WHERE (dim_chatbot.channel) IN ('Chat', 'Web', 'Whatsapp') AND (dim_chatbot.bot_departament) = 'Retenção' AND (((dim_date.nk_date) >= (DATE('2026-06-08')) AND (dim_date.nk_date) < (DATE('2026-06-13'))))",
+    "resposta_esperada_unidade": "count",
+    "esperava_encontrar": true,
+    "tolerancia_relativa": 0.05,
+    "_origem": "Notion: dim_chatbot · RETENÇÃO — #1 Demanda Recebida",
+    "_resultado_referencia_2026_06_24": 1525
+  },
+  {
+    "id": 30,
+    "pergunta": "Qual foi o total de transbordos do chatbot no período de 08 a 12 de junho de 2026, no departamento Retenção, nos canais Chat, Web e Whatsapp?",
+    "gabarito_sql": "SELECT COALESCE(SUM(dim_chatbot.sum_of_transfers), 0) AS dim_chatbot_count_of_transfers FROM `gold_serve.dim_chatbot` AS dim_chatbot LEFT JOIN `contaazul-ssbi.gold_common.dim_date` AS dim_date ON dim_chatbot.nk_date = dim_date.nk_date WHERE (dim_chatbot.channel) IN ('Chat', 'Web', 'Whatsapp') AND (dim_chatbot.bot_departament) = 'Retenção' AND (((dim_date.nk_date) >= (DATE('2026-06-08')) AND (dim_date.nk_date) < (DATE('2026-06-13'))))",
+    "resposta_esperada_unidade": "count",
+    "esperava_encontrar": true,
+    "tolerancia_relativa": 0.05,
+    "_origem": "Notion: dim_chatbot · RETENÇÃO — #2 Transbordos",
+    "_resultado_referencia_2026_06_24": 797
+  },
+  {
+    "id": 31,
+    "pergunta": "Qual foi o percentual de demandas avaliadas (total de avaliações ÷ total de interações) do chatbot no período de 08 a 12 de junho de 2026, no departamento Retenção, nos canais Chat, Web e Whatsapp? Responda como decimal entre 0 e 1.",
+    "gabarito_sql": "SELECT COALESCE(SUM(dim_chatbot.sum_of_total_ratings), 0) / NULLIF(COALESCE(SUM(dim_chatbot.sum_of_interactions), 0), 0) AS dim_chatbot_rated_demands FROM `gold_serve.dim_chatbot` AS dim_chatbot LEFT JOIN `contaazul-ssbi.gold_common.dim_date` AS dim_date ON dim_chatbot.nk_date = dim_date.nk_date WHERE (dim_chatbot.channel) IN ('Chat', 'Web', 'Whatsapp') AND (dim_chatbot.bot_departament) = 'Retenção' AND (((dim_date.nk_date) >= (DATE('2026-06-08')) AND (dim_date.nk_date) < (DATE('2026-06-13'))))",
+    "resposta_esperada_unidade": "ratio",
+    "esperava_encontrar": true,
+    "tolerancia_relativa": 0.05,
+    "_origem": "Notion: dim_chatbot · RETENÇÃO — #3 Demandas Avaliadas",
+    "_resultado_referencia_2026_06_24": 0.0721
+  },
+  {
+    "id": 32,
+    "pergunta": "Qual foi o CSAT do chatbot (avaliações positivas ÷ total de avaliações) no período de 08 a 12 de junho de 2026, no departamento Retenção, nos canais Chat, Web e Whatsapp? Responda como decimal entre 0 e 1.",
+    "gabarito_sql": "SELECT COALESCE(SUM(dim_chatbot.sum_of_positive_ratings), 0) / NULLIF(COALESCE(SUM(dim_chatbot.sum_of_total_ratings), 0), 0) AS dim_chatbot_csat FROM `gold_serve.dim_chatbot` AS dim_chatbot LEFT JOIN `contaazul-ssbi.gold_common.dim_date` AS dim_date ON dim_chatbot.nk_date = dim_date.nk_date WHERE (dim_chatbot.channel) IN ('Chat', 'Web', 'Whatsapp') AND (dim_chatbot.bot_departament) = 'Retenção' AND (((dim_date.nk_date) >= (DATE('2026-06-08')) AND (dim_date.nk_date) < (DATE('2026-06-13'))))",
+    "resposta_esperada_unidade": "ratio",
+    "esperava_encontrar": true,
+    "tolerancia_relativa": 0.05,
+    "_origem": "Notion: dim_chatbot · RETENÇÃO — #4 CSAT",
+    "_resultado_referencia_2026_06_24": 0.6455
+  },
+  {
+    "id": 33,
+    "pergunta": "Quantas avaliações positivas o chatbot recebeu no período de 08 a 12 de junho de 2026, no departamento Retenção, nos canais Chat, Web e Whatsapp?",
+    "gabarito_sql": "SELECT COALESCE(SUM(dim_chatbot.sum_of_positive_ratings), 0) AS dim_chatbot_count_of_positive_ratings FROM `gold_serve.dim_chatbot` AS dim_chatbot LEFT JOIN `contaazul-ssbi.gold_common.dim_date` AS dim_date ON dim_chatbot.nk_date = dim_date.nk_date WHERE (dim_chatbot.channel) IN ('Chat', 'Web', 'Whatsapp') AND (dim_chatbot.bot_departament) = 'Retenção' AND (((dim_date.nk_date) >= (DATE('2026-06-08')) AND (dim_date.nk_date) < (DATE('2026-06-13'))))",
+    "resposta_esperada_unidade": "count",
+    "esperava_encontrar": true,
+    "tolerancia_relativa": 0.05,
+    "_origem": "Notion: dim_chatbot · RETENÇÃO — #5 Avaliações Positivas",
+    "_resultado_referencia_2026_06_24": 71
+  },
+  {
+    "id": 34,
+    "pergunta": "Quantas avaliações negativas o chatbot recebeu no período de 08 a 12 de junho de 2026, no departamento Retenção, nos canais Chat, Web e Whatsapp?",
+    "gabarito_sql": "SELECT COALESCE(SUM(dim_chatbot.sum_of_negative_ratings), 0) AS dim_chatbot_count_of_negative_ratings FROM `gold_serve.dim_chatbot` AS dim_chatbot LEFT JOIN `contaazul-ssbi.gold_common.dim_date` AS dim_date ON dim_chatbot.nk_date = dim_date.nk_date WHERE (dim_chatbot.channel) IN ('Chat', 'Web', 'Whatsapp') AND (dim_chatbot.bot_departament) = 'Retenção' AND (((dim_date.nk_date) >= (DATE('2026-06-08')) AND (dim_date.nk_date) < (DATE('2026-06-13'))))",
+    "resposta_esperada_unidade": "count",
+    "esperava_encontrar": true,
+    "tolerancia_relativa": 0.05,
+    "_origem": "Notion: dim_chatbot · RETENÇÃO — #6 Avaliações Negativas",
+    "_resultado_referencia_2026_06_24": 39
+  },
+  {
+    "id": 35,
+    "pergunta": "Qual foi a taxa de retenção do chatbot (1 menos a razão entre transbordos e interações) no período de 08 a 12 de junho de 2026, no departamento Retenção, nos canais Chat, Web e Whatsapp? Responda como decimal entre 0 e 1.",
+    "gabarito_sql": "SELECT GREATEST(1 - COALESCE(SUM(dim_chatbot.sum_of_transfers), 0) / NULLIF(COALESCE(SUM(dim_chatbot.sum_of_interactions), 0), 0), 0) AS dim_chatbot_pct_retention FROM `gold_serve.dim_chatbot` AS dim_chatbot LEFT JOIN `contaazul-ssbi.gold_common.dim_date` AS dim_date ON dim_chatbot.nk_date = dim_date.nk_date WHERE (dim_chatbot.channel) IN ('Chat', 'Web', 'Whatsapp') AND (dim_chatbot.bot_departament) = 'Retenção' AND (((dim_date.nk_date) >= (DATE('2026-06-08')) AND (dim_date.nk_date) < (DATE('2026-06-13'))))",
+    "resposta_esperada_unidade": "ratio",
+    "esperava_encontrar": true,
+    "tolerancia_relativa": 0.05,
+    "_origem": "Notion: dim_chatbot · RETENÇÃO — #7 Retenção",
+    "_resultado_referencia_2026_06_24": 0.4774
   }
-
-
 ]
