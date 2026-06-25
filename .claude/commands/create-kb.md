@@ -229,6 +229,15 @@ Fim do command. Não roda eval automaticamente.
 
 > **Anti-truncamento (invariante I2b — KB completa por avaliador).** Champion e candidate vão **inteiros** para os respectivos `kb-evaluator`. A leitura é dirigida pela contagem (`wc -l`), não por um número fixo de chamadas — vale para qualquer KB, de tamanho desconhecido. Entregar KB **parcial** ao avaliador viola o I2b tão gravemente quanto recortá-la por pergunta. **Nunca dispare os `kb-evaluator` com champion ou candidate truncado.**
 
+### 6a.5. Executar o gabarito (uma vez; vale para champion E candidate)
+
+A verdade de cada pergunta é **dinâmica**: rode a `gabarito_sql` agora e use o resultado para julgar **os dois** lados. Champion e candidate são comparados contra o **mesmo** `valor_gabarito` — mesma run, mesmos dados, computado **uma única vez** (não por lado). Isso é o que torna o A/B justo.
+
+Carregue a tool via ToolSearch (`select:mcp__bq_local__execute_sql_readonly`). Para **cada** pergunta com `gabarito_sql` e `esperava_encontrar == true`, execute a `gabarito_sql` **verbatim** (`projectId` = 1ª parte do FQN, default `contaazul-ssbi`; `query` = string literal). Capture `valor_gabarito`, `gabarito_job_id`, `gabarito_bytes`, `gabarito_ok` — **mesmas regras e anti-alucinação do Passo 2.5 do `/run-eval`**: SQL nunca reescrita/corrigida; sem execução real → `null` e `gabarito_ok = false`; a `gabarito_sql` **nunca** entra no prompt do `kb-evaluator`.
+
+- Perguntas sem `gabarito_sql` (legado): `valor_gabarito = null`, usa `resposta_esperada_valor` na comparação.
+- `esperava_encontrar == false`: pula (sem verdade numérica).
+
 ### 6b. Disparar 2N kb-evaluator em paralelo
 
 Em **uma única mensagem**, dispare `2 * N` (N = número de perguntas) `Agent(subagent_type="kb-evaluator")`:
@@ -262,25 +271,27 @@ Para cada resposta:
 ### 6d. Avaliar (idêntico ao /run-eval)
 
 Para cada pergunta (champion e candidate separadamente):
+- `valor_referencia` = `valor_gabarito` (gabarito dinâmico, do Passo 6a.5) ou `resposta_esperada_valor` (legado).
+- Se a pergunta tem `gabarito_sql` e `gabarito_ok == false`: `status = "erro_gabarito"` para **ambos** os lados (a verdade não existe nesta run) — pule a comparação numérica desse `id` nos dois snapshots. `valor_referencia = null`, `delta_* = null`, `dentro_tolerancia = false`.
 - `encontrada_ok` = `encontrada_obtida == esperava_encontrar`
 - `unidade_ok` (case-insensitive; `count`/`""`/`#` equivalentes; moedas estrito)
-- Quando `esperava_encontrar == true` e `encontrada == true`:
-  - `delta_absoluto = abs(valor_obtido - resposta_esperada_valor)`
-  - `delta_relativo = delta_absoluto / abs(resposta_esperada_valor)` (ou 0/1 se esperado=0)
+- Quando `esperava_encontrar == true`, `encontrada == true` e não houve `erro_gabarito`:
+  - `delta_absoluto = abs(valor_obtido - valor_referencia)`
+  - `delta_relativo = delta_absoluto / abs(valor_referencia)` (ou 0/1 se referência=0)
   - `dentro_tolerancia = delta_relativo <= tolerancia_relativa`
 - `execucao_ok`: SQL contém SELECT, bytes >= 0, job_id len >= 8 alfanumérico.
-- `status = "aprovado"` se todas: `encontrada_ok && (unidade_ok || !esperava) && dentro_tolerancia && !parse_error && (execucao_ok || !esperava)`.
+- `status = "erro_gabarito"` (precede) | senão `"aprovado"` se todas: `encontrada_ok && (unidade_ok || !esperava) && dentro_tolerancia && !parse_error && (execucao_ok || !esperava)` | senão `"reprovado"`.
 
 ### 6e. Gravar 2 snapshots (formato `{ meta, results }`, modo champion/candidate)
 
 `ts = $(date +%Y-%m-%dT%H-%M-%S)`. `mkdir -p <RESULTS_DIR>` se ausente.
 
-Grave 2 arquivos no formato `{ meta, results }` — **mesmo bloco `meta` do Passo 6 do `/run-eval`** (hashes 16-char, agregados `aprovados`/`reprovados`/`total`/`confianca_media`/`bytes_total`), com estas diferenças por arquivo:
+Grave 2 arquivos no formato `{ meta, results }` — **mesmo bloco `meta` do Passo 6 do `/run-eval`** (hashes 16-char, agregados `aprovados`/`reprovados`/`erros_gabarito`/`total`/`confianca_media`/`bytes_total`; `bytes_total` inclui os bytes do gabarito do Passo 6a.5), com estas diferenças por arquivo:
 
 - `<RESULTS_DIR>/<ts>.champion.json` — `results` = N resultados do champion; `meta.mode = "champion"`; `meta.kb_hash` = sha256(16) de **`kb.md`** (champion); `meta.run_id = "<ts>"`.
 - `<RESULTS_DIR>/<ts>.candidate.json` — `results` = N resultados do candidate; `meta.mode = "candidate"`; `meta.kb_hash` = sha256(16) de **`kb-candidate.md`** (candidate); `meta.run_id = "<ts>"`.
 
-`meta.questions_hash` é o mesmo nos dois (sha256(16) de `questions.json` — as MESMAS perguntas avaliam ambos). Agregados são calculados sobre o respectivo `results`. Cada elemento de `results` mantém o schema atual, inalterado.
+`meta.questions_hash` é o mesmo nos dois (sha256(16) de `questions.json` — as MESMAS perguntas avaliam ambos). Agregados são calculados sobre o respectivo `results`. Cada elemento de `results` segue o **schema do Passo 6.4 do `/run-eval`** (com os campos de gabarito — `gabarito_sql`, `valor_gabarito`, `gabarito_job_id`, `gabarito_bytes`, `gabarito_ok` — e **sem** `resposta_esperada_valor`). O `valor_gabarito` é idêntico nos dois arquivos (mesma verdade da run, computada uma vez no Passo 6a.5).
 
 > **Não** appende ao `_index.json` aqui. Champion/candidate são *staging* de A/B, não pontos da linha do tempo. A entrada canônica é appendada **só na consolidação** (Passo 8), refletindo o que de fato persistiu como `kb.md`. (O `kb_hash` do candidate já é o hash do que virará `kb.md` na promoção — fica consistente sem recomputar.)
 
@@ -293,6 +304,7 @@ Para cada pergunta, determine `transicao`:
 - `mantém_reprovado` (reprovado → reprovado)
 - `melhorou` (reprovado → aprovado)
 - `regrediu` (aprovado → reprovado)
+- `erro_gabarito` (status `erro_gabarito` nos dois lados — o gabarito não rodou; pergunta **não comparável** nesta run, não entra no Δ de aprovados)
 
 Compute totals:
 - `aprovados_champion`, `aprovados_candidate`
@@ -316,6 +328,7 @@ Mudanças por pergunta:
 ```
 
 Motivo curto para regressão/melhoria:
+- `gabarito_falhou` (status `erro_gabarito` — a `gabarito_sql` não executou)
 - `parse_error`
 - `encontrada esperada=X obtida=Y`
 - `unidade esperada=X obtida=Y`
@@ -419,6 +432,7 @@ Se `--regenerate-questions` foi usado, imprima também:
 - **TARGET_PATH é binário**: `kb.md` para KB nova, `kb-candidate.md` para KB existente. Sem exceções.
 - **Agents em paralelo**: kb-builder + question-creator no mesmo turno via 2 tool_uses na mesma mensagem.
 - **kb-evaluator é sempre paralelo no candidate flow**: 2N tool_uses em uma única mensagem.
+- **Gabarito é computado uma vez, verbatim, e compartilhado**: a `gabarito_sql` roda no Passo 6a.5 (orquestrador, `execute_sql_readonly`), nunca regenerada e nunca no prompt do candidato; o mesmo `valor_gabarito` julga champion e candidate. Falha vira `erro_gabarito` nos dois lados — não vira regressão/melhoria.
 - **Nunca ajuste manualmente as respostas dos subagentes**: registre o que retornaram.
 - **Nunca leia kb.md no orquestrador para tomar decisões**: você lê só para passar ao kb-evaluator no Passo 6a. A decisão de promoção é baseada em diff de resultados, não em diff de markdown.
 - **Snapshots carregam `meta`**: champion/candidate são `{ meta, results }` com `mode` correspondente; o array por-pergunta vai em `results`, inalterado. Só a consolidação (Passo 8) appenda a entrada canônica (`mode:"full"`) ao `_index.json`. Staging **nunca** entra na linha do tempo. Falha de índice/hash emite aviso, nunca aborta.

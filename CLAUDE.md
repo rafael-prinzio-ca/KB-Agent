@@ -41,6 +41,15 @@ MCP `bq_local` usa `execute_sql_readonly`. Nunca trocar por `execute_sql` (que p
 
 Snapshots são `{ meta, results }` (o array por-pergunta vai em `results`, **inalterado**); `results/_index.json` é append-only e **derivado** (reconstruível varrendo snapshots; falha de escrita nunca aborta); `/eval-report` é **leitura pura** (sem agentes, sem BigQuery). Hashes e índice nunca abortam uma run. Tudo isso foi adicionado **sem tocar os 3 subagents** — o carimbo de `meta` é feito pelos orquestradores. Não mova lógica de observabilidade para dentro dos subagents nem torne a escrita do índice fatal.
 
+### 7. Gabarito dinâmico — a verdade é a `gabarito_sql` executada na run
+
+Cada pergunta do `questions.json` carrega uma `gabarito_sql` (query canônica). A "resposta certa" **não** é um número estático — é o resultado de rodar essa SQL **na própria run**, contra o BigQuery ao vivo. Motivo: o banco sofre **atualização retroativa**, então um valor congelado fica errado sem a KB ter piorado. Regras que sustentam o design (mudar exige discussão):
+
+- A `gabarito_sql` é executada **verbatim pelo orquestrador** (`/run-eval` Passo 2.5, `/create-kb` Passo 6a.5) via `execute_sql_readonly` — **nunca regenerada, corrigida ou otimizada** em runtime (determinismo = verdade não-alucinada). Falha de execução vira `status = "erro_gabarito"`, **não** reprovação do candidato.
+- A `gabarito_sql` **NUNCA** entra no prompt do `kb-evaluator`. O candidato chega ao número só pela KB — senão a avaliação vira cópia. (Reforça o Invariante #1: o gabarito vem de fonte independente da KB; KB errada não "casa" com gabarito errado.)
+- `valor_gabarito` é gravado no snapshot (auditável via `gabarito_job_id`) mas **varia entre runs** por design. A comparação longitudinal é por **`status` por pergunta**, não por valor absoluto — por isso o status fica estável apesar do drift de dados.
+- O `question-creator` ainda gera o formato **legado** (`resposta_esperada_valor`, sem `gabarito_sql`). Os commands toleram os dois formatos, mas `--regenerate-questions` numa KB de gabarito dinâmico **sobrescreveria** a `gabarito_sql`. Atualizar o `question-creator` para emitir `gabarito_sql` é trabalho à parte (pendente).
+
 ## Layout (o que é versionado vs gerado)
 
 **Versionado:**
@@ -67,12 +76,13 @@ Snapshots são `{ meta, results }` (o array por-pergunta vai em `results`, **ina
 
 - **Slug de KB**: `[a-z0-9-]+` (minúsculas, dígitos, hífens). Sem espaços, acentos, underscores. Validado no Passo 1 de `/create-kb`.
 - **Idioma**: tudo em português (commands, agents, README, mensagens). Manter consistência.
-- **Snapshots `results/`** (formato `{ meta, results }`; `meta` carrega `kb`, `run_id`, `kb_hash`, `questions_hash`, `mode`, agregados e `bytes_total`):
+- **Snapshots `results/`** (formato `{ meta, results }`; `meta` carrega `kb`, `run_id`, `kb_hash`, `questions_hash`, `mode`, agregados `aprovados`/`reprovados`/`erros_gabarito`/`total`/`confianca_media` e `bytes_total`):
   - `<ts>.json` = canônico (`mode` `full`/`quick`; de `/run-eval` ou pós-promoção)
   - `<ts>.champion.json` / `<ts>.candidate.json` = staging do champion-vs-candidate (`mode` `champion`/`candidate`); na consolidação viram `<ts>.json` com `mode` reescrito p/ `full`
   - `_index.json` = índice append-only (uma entrada `meta` por run canônica; staging **não** entra). Derivado: reconstruível; falha de escrita nunca aborta
   - Hashes = sha256 (16 chars) de `kb.md`/`questions.json`; `"unknown"` se falhar
-  - Snapshots antigos (array nu, sem `meta`) são tolerados na leitura e **nunca** reescritos
+  - Cada item de `results` tem 3 `status` possíveis: `aprovado` / `reprovado` / `erro_gabarito` (gabarito não executou). Campos de gabarito por item: `gabarito_sql`, `valor_gabarito`, `gabarito_job_id`, `gabarito_bytes`, `gabarito_ok`. `bytes_total` soma candidato **+** gabarito.
+  - Snapshots antigos (array nu, ou com `resposta_esperada_valor` em vez de `gabarito_sql`) são tolerados na leitura e **nunca** reescritos
 - **Datas relativas** em prompts/AskUserQuestion: sempre converter para absoluto antes de gravar em `kb.md`.
 
 ## Workflow de mudanças comuns

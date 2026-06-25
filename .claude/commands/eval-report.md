@@ -62,9 +62,11 @@ Seja `LAST = RUNS[-1]` (run mais recente).
 2. Para cada item de `results`, monte um objeto enxuto para o relatório:
    - `id`, `pergunta` (string; pode truncar para ~80 chars na exibição), `status`.
    - `esperava_encontrar`.
-   - `esperado` = `resposta_esperada_valor`, `obtido` = `valor_obtido`, `unidade` = `unidade_obtida` (ou `resposta_esperada_unidade`).
+   - `esperado` = `valor_gabarito` (verdade-corrente da run; **fallback** `resposta_esperada_valor` em snapshots legados), `obtido` = `valor_obtido`, `unidade` = `unidade_obtida` (ou `resposta_esperada_unidade`).
    - `delta_relativo`, `tolerancia` = `tolerancia_relativa`.
-   - `motivo`: vazio se `status == "aprovado"`; senão o motivo curto na ordem de prioridade: `parse_error` › `encontrada esperada=X obtida=Y` › `unidade esperada=X obtida=Y` › `delta_relativo=Z (tol=T)` › `execucao_ausente`.
+   - `motivo`: vazio se `status == "aprovado"`; se `status == "erro_gabarito"` → `gabarito_falhou` (benchmark não executou — não é falha do candidato); senão o motivo curto na ordem de prioridade: `parse_error` › `encontrada esperada=X obtida=Y` › `unidade esperada=X obtida=Y` › `delta_relativo=Z (tol=T)` › `execucao_ausente`.
+
+> O template renderiza qualquer `status != "aprovado"` (incluindo `erro_gabarito`) com a pill vermelha "reprovado" e a observação no `motivo` — não altere o template por isso. O `esperado` (=`valor_gabarito`) varia entre runs por design (gabarito dinâmico); não é regressão.
 3. Se o arquivo de `LAST` não existir (índice aponta para snapshot removido): use o snapshot existente mais recente; se nenhum, deixe `questions = []` e siga.
 
 ## Passo 3 — Computar Δ e marcadores entre runs
