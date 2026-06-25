@@ -1,6 +1,9 @@
 # Histórico de avaliações gerado por /run-eval (não versionado)
 knowledge-bases/*/results/
 
+# Relatórios HTML gerados por /eval-report (derivados, regeneráveis)
+knowledge-bases/*/reports/
+
 # Secrets
 .env
 
@@ -13,5 +16,5 @@ repos/
 # OS
 .DS_Store
 
-# Local settings com caminhos espec�ficos da m�quina
+# Local settings com caminhos espec�ficos da m�quina
 .claude/settings.local.json

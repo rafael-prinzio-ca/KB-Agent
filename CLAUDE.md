@@ -4,7 +4,7 @@ Contexto para o Claude trabalhar neste repositório sem regredir invariantes. Co
 
 ## O que é
 
-`kb-manager` é um plugin do Claude Code que constrói, versiona e avalia **Knowledge Bases sobre dados** (data dictionaries + perguntas-benchmark). Ciclo coberto por dois slash commands: `/create-kb` (build/update) e `/run-eval` (avaliação).
+`kb-manager` é um plugin do Claude Code que constrói, versiona e avalia **Knowledge Bases sobre dados** (data dictionaries + perguntas-benchmark). Ciclo coberto por três slash commands: `/create-kb` (build/update), `/run-eval` (avaliação; `--quick` = check diário binário vs última run verde) e `/eval-report` (relatório histórico — leitura pura, gera HTML para gestores).
 
 Stack: slash commands + subagents Claude + 3 MCPs Python locais (`bq_local`, `looker_local`, `metabase_local`) que falam com BigQuery, Looker e Metabase.
 
@@ -37,6 +37,10 @@ Saída obrigatória inclui `sql_executado`, `bytes_processed`, `job_id`. Se algu
 
 MCP `bq_local` usa `execute_sql_readonly`. Nunca trocar por `execute_sql` (que permite escrita). Se precisar de escrita, é caso novo — discutir antes.
 
+### 6. Observabilidade é camada não-invasiva por cima do núcleo
+
+Snapshots são `{ meta, results }` (o array por-pergunta vai em `results`, **inalterado**); `results/_index.json` é append-only e **derivado** (reconstruível varrendo snapshots; falha de escrita nunca aborta); `/eval-report` é **leitura pura** (sem agentes, sem BigQuery). Hashes e índice nunca abortam uma run. Tudo isso foi adicionado **sem tocar os 3 subagents** — o carimbo de `meta` é feito pelos orquestradores. Não mova lógica de observabilidade para dentro dos subagents nem torne a escrita do índice fatal.
+
 ## Layout (o que é versionado vs gerado)
 
 **Versionado:**
@@ -50,7 +54,8 @@ MCP `bq_local` usa `execute_sql_readonly`. Nunca trocar por `execute_sql` (que p
 **Gerado (gitignored — ver [.gitignore](.gitignore)):**
 - `mcp-bq/`, `mcp-looker/`, `mcp-metabase/` — instâncias instaladas (venvs) pelo `setup-mcp.sh`. **Editar aqui é inútil** — `setup-mcp.sh` sobrescreve a partir de `.claude-plugin/mcps/`. Sempre edite o source-of-truth.
 - `repos/` — clones LookML + Dataform via `sync-repos.sh`
-- `knowledge-bases/*/results/` — snapshots de avaliação
+- `knowledge-bases/*/results/` — snapshots de avaliação (`{ meta, results }`) + `_index.json` (índice append-only, derivado)
+- `knowledge-bases/*/reports/` — HTML gerado por `/eval-report` (derivado, regenerável)
 - `.env` — secrets
 
 **Backups (no disco, sem rotação):**
@@ -62,21 +67,25 @@ MCP `bq_local` usa `execute_sql_readonly`. Nunca trocar por `execute_sql` (que p
 
 - **Slug de KB**: `[a-z0-9-]+` (minúsculas, dígitos, hífens). Sem espaços, acentos, underscores. Validado no Passo 1 de `/create-kb`.
 - **Idioma**: tudo em português (commands, agents, README, mensagens). Manter consistência.
-- **Snapshots `results/`**:
-  - `<ts>.json` = canônico (de `/run-eval` ou pós-promoção)
-  - `<ts>.champion.json` / `<ts>.candidate.json` = staging do champion-vs-candidate (consolidado conforme decisão)
+- **Snapshots `results/`** (formato `{ meta, results }`; `meta` carrega `kb`, `run_id`, `kb_hash`, `questions_hash`, `mode`, agregados e `bytes_total`):
+  - `<ts>.json` = canônico (`mode` `full`/`quick`; de `/run-eval` ou pós-promoção)
+  - `<ts>.champion.json` / `<ts>.candidate.json` = staging do champion-vs-candidate (`mode` `champion`/`candidate`); na consolidação viram `<ts>.json` com `mode` reescrito p/ `full`
+  - `_index.json` = índice append-only (uma entrada `meta` por run canônica; staging **não** entra). Derivado: reconstruível; falha de escrita nunca aborta
+  - Hashes = sha256 (16 chars) de `kb.md`/`questions.json`; `"unknown"` se falhar
+  - Snapshots antigos (array nu, sem `meta`) são tolerados na leitura e **nunca** reescritos
 - **Datas relativas** em prompts/AskUserQuestion: sempre converter para absoluto antes de gravar em `kb.md`.
 
 ## Workflow de mudanças comuns
 
 | Quero mudar… | Onde mexer |
 |---|---|
-| Comportamento de `/create-kb` ou `/run-eval` | `.claude/commands/<cmd>.md` |
+| Comportamento de `/create-kb`, `/run-eval` ou `/eval-report` | `.claude/commands/<cmd>.md` |
+| Visual/layout do relatório HTML | template (CSS+JS inline) no corpo de `.claude/commands/eval-report.md` |
 | Comportamento de um subagent | `.claude/agents/<agent>.md` |
 | Schema/lógica de um MCP | `.claude-plugin/mcps/<name>/server.py` → depois rodar `./setup-mcp.sh` |
 | Dependências de um MCP | `.claude-plugin/mcps/<name>/requirements.txt` → `./setup-mcp.sh` |
 | Lista de repos sincronizados | `.env` (`KB_GITHUB_ORG`, `KB_GITHUB_REPOS`) |
-| Permissões pré-aprovadas | [.claude/settings.json](.claude/settings.json) |
+| Permissões pré-aprovadas | `.claude/settings.json` (compartilhadas) · `.claude/settings.local.json` (locais da máquina, gitignored — paths absolutos, liberadas p/ multi-KB) |
 | Manifesto do plugin (commands/agents/mcps declarados) | `.claude-plugin/plugin.json` |
 
 Após editar MCP source, **sempre** rode `./setup-mcp.sh` — instâncias em `mcp-*/` são cópias.
@@ -90,6 +99,8 @@ Após mudar `.claude/commands/`, `.claude/agents/` ou `.claude-plugin/plugin.jso
 - **Pergunta histórica que sempre passou reprovou**: pode ser drift de dados no BigQuery (legítimo — atualize `kb.md`) ou tolerância apertada demais. Não relaxe tolerância sem confirmar.
 - **`kb-candidate.md` órfão**: execução anterior interrompida. `/create-kb` Passo 1a trata com AskUserQuestion (descartar/usar/abortar). Não delete preventivamente.
 - **Editar `mcp-bq/server.py` direto**: será sobrescrito no próximo `setup-mcp.sh`. Sempre `.claude-plugin/mcps/bq/server.py`.
+- **Alerta de regressão sumiu / aparece `ℹ alvo móvel`**: se `questions_hash` mudou entre runs (ex.: `--regenerate-questions`), a comparação por pergunta é suprimida **de propósito** (alvo móvel) — não é bug. Para voltar a comparar, mantenha `questions.json` fixo entre runs.
+- **`/eval-report` diz "Nenhuma avaliação encontrada"**: não há snapshots em `results/`. Rode `/run-eval <kb>` primeiro. Apagar `_index.json` **não** perde histórico — ele é reconstruído varrendo os snapshots.
 
 ## Como começar a trabalhar aqui
 
