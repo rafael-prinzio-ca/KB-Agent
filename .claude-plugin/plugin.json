@@ -1,7 +1,7 @@
 {
   "name": "kb-manager",
-  "version": "0.4.0",
-  "description": "Manager de Knowledge Bases: /create-kb para construir/atualizar (sync de repos, build + questions em paralelo, champion-vs-candidate quando KB já existe) + /run-eval para avaliar uma KB pronta (kb-evaluator paralelo contra BigQuery, snapshot em results/). Question-creator NÃO lê kb.md — gera perguntas direto das fontes (Looker/Metabase), evitando 'alvo móvel'.",
+  "version": "0.5.0",
+  "description": "Manager de Knowledge Bases: /create-kb para construir/atualizar (sync de repos, build + questions em paralelo, champion-vs-candidate quando KB já existe) + /run-eval para avaliar uma KB pronta (kb-evaluator paralelo contra BigQuery, snapshot {meta,results} em results/ + _index.json) + /eval-report para histórico de qualidade (tabela + HTML standalone offline para gestores). Question-creator NÃO lê kb.md — gera perguntas direto das fontes (Looker/Metabase), evitando 'alvo móvel'.",
   "author": {
     "name": "Tiago Lippi"
   },
@@ -19,7 +19,12 @@
     {
       "name": "run-eval",
       "path": ".claude/commands/run-eval.md",
-      "description": "Avalia uma KB pronta — roda kb-evaluator paralelo (uma instância por pergunta) contra BigQuery, grava snapshot em results/. Requer kb.md e questions.json prévios (use /create-kb se não existirem). Uso: /run-eval <kb>"
+      "description": "Avalia uma KB pronta — roda kb-evaluator paralelo (uma instância por pergunta) contra BigQuery, grava snapshot { meta, results } em results/ e indexa em _index.json. Alerta de regressão vs run anterior; flag --quick = check diário binário. Requer kb.md e questions.json prévios. Uso: /run-eval <kb> [--quick]"
+    },
+    {
+      "name": "eval-report",
+      "path": ".claude/commands/eval-report.md",
+      "description": "Relatório histórico de qualidade de uma KB — leitura pura (sem agentes, sem BigQuery). Lê snapshots/índice em results/, imprime tabela de tendência e gera HTML standalone (offline, sem dependências) em reports/<kb>-history.html para gestores. Uso: /eval-report <kb>"
     }
   ],
   "agents": [
