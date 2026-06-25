@@ -269,15 +269,18 @@ Para cada pergunta (champion e candidate separadamente):
 - `execucao_ok`: SQL contém SELECT, bytes >= 0, job_id len >= 8 alfanumérico.
 - `status = "aprovado"` se todas: `encontrada_ok && (unidade_ok || !esperava) && dentro_tolerancia && !parse_error && (execucao_ok || !esperava)`.
 
-### 6e. Gravar 2 snapshots
+### 6e. Gravar 2 snapshots (formato `{ meta, results }`, modo champion/candidate)
 
-Timestamp via `date +%Y-%m-%dT%H-%M-%S`.
+`ts = $(date +%Y-%m-%dT%H-%M-%S)`. `mkdir -p <RESULTS_DIR>` se ausente.
 
-Grave 2 arquivos (mesmo schema do `/run-eval`):
-- `<RESULTS_DIR>/<ts>.champion.json` (array dos N resultados champion)
-- `<RESULTS_DIR>/<ts>.candidate.json` (array dos N resultados candidate)
+Grave 2 arquivos no formato `{ meta, results }` — **mesmo bloco `meta` do Passo 6 do `/run-eval`** (hashes 16-char, agregados `aprovados`/`reprovados`/`total`/`confianca_media`/`bytes_total`), com estas diferenças por arquivo:
 
-`mkdir -p <RESULTS_DIR>` se ausente.
+- `<RESULTS_DIR>/<ts>.champion.json` — `results` = N resultados do champion; `meta.mode = "champion"`; `meta.kb_hash` = sha256(16) de **`kb.md`** (champion); `meta.run_id = "<ts>"`.
+- `<RESULTS_DIR>/<ts>.candidate.json` — `results` = N resultados do candidate; `meta.mode = "candidate"`; `meta.kb_hash` = sha256(16) de **`kb-candidate.md`** (candidate); `meta.run_id = "<ts>"`.
+
+`meta.questions_hash` é o mesmo nos dois (sha256(16) de `questions.json` — as MESMAS perguntas avaliam ambos). Agregados são calculados sobre o respectivo `results`. Cada elemento de `results` mantém o schema atual, inalterado.
+
+> **Não** appende ao `_index.json` aqui. Champion/candidate são *staging* de A/B, não pontos da linha do tempo. A entrada canônica é appendada **só na consolidação** (Passo 8), refletindo o que de fato persistiu como `kb.md`. (O `kb_hash` do candidate já é o hash do que virará `kb.md` na promoção — fica consistente sem recomputar.)
 
 ## Passo 7 — Diff + decisão
 
@@ -342,6 +345,10 @@ rm <RESULTS_DIR>/<ts>.champion.json
 mv <RESULTS_DIR>/<ts>.candidate.json <RESULTS_DIR>/<ts>.json
 ```
 
+Consolide a identidade no índice (a decisão A/B virou o ponto canônico da linha do tempo):
+1. Em `<RESULTS_DIR>/<ts>.json`, reescreva `meta.mode` de `"candidate"` para `"full"` (Read → ajuste só esse campo → Write; `results` e os demais campos de `meta` ficam intactos — o `kb_hash` do candidate já é o hash do novo `kb.md`).
+2. Appende esse `meta` (com `mode:"full"`) ao `<RESULTS_DIR>/_index.json` — append-only, **mesma regra tolerante do Passo 6.5 do `/run-eval`** (falha emite aviso, não aborta).
+
 Imprima:
 ```
 ✓ Candidate promovido.
@@ -358,6 +365,10 @@ rm <RESULTS_DIR>/<ts>.candidate.json
 mv <RESULTS_DIR>/<ts>.champion.json <RESULTS_DIR>/<ts>.json
 ```
 
+Consolide a identidade no índice (o champion continua sendo o canônico, mas registramos o ponto na linha do tempo):
+1. Em `<RESULTS_DIR>/<ts>.json`, reescreva `meta.mode` de `"champion"` para `"full"`.
+2. Appende esse `meta` (com `mode:"full"`) ao `<RESULTS_DIR>/_index.json` — append-only, tolerante (Passo 6.5 do `/run-eval`).
+
 Imprima:
 ```
 ✓ Candidate descartado. kb.md permanece como estava.
@@ -367,6 +378,8 @@ Imprima:
 ### Opção: Manter para inspeção
 
 Não move/deleta nada. Os 2 arquivos `.champion.json` e `.candidate.json` permanecem como staging.
+
+> Como **nenhuma consolidação ocorreu**, nada é appendado ao `_index.json` — os snapshots de staging não entram na linha do tempo (são A/B, não pontos canônicos). Se você promover manualmente depois (via os `mv` abaixo), rode `/run-eval <kb>` para registrar o ponto canônico no índice.
 
 Imprima:
 ```
@@ -406,3 +419,4 @@ Se `--regenerate-questions` foi usado, imprima também:
 - **kb-evaluator é sempre paralelo no candidate flow**: 2N tool_uses em uma única mensagem.
 - **Nunca ajuste manualmente as respostas dos subagentes**: registre o que retornaram.
 - **Nunca leia kb.md no orquestrador para tomar decisões**: você lê só para passar ao kb-evaluator no Passo 6a. A decisão de promoção é baseada em diff de resultados, não em diff de markdown.
+- **Snapshots carregam `meta`**: champion/candidate são `{ meta, results }` com `mode` correspondente; o array por-pergunta vai em `results`, inalterado. Só a consolidação (Passo 8) appenda a entrada canônica (`mode:"full"`) ao `_index.json`. Staging **nunca** entra na linha do tempo. Falha de índice/hash emite aviso, nunca aborta.
