@@ -1,6 +1,6 @@
 {
   "name": "kb-manager",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Manager de Knowledge Bases: /create-kb para construir/atualizar (sync de repos, build + questions em paralelo, champion-vs-candidate quando KB já existe) + /run-eval para avaliar uma KB pronta (kb-evaluator paralelo contra BigQuery, snapshot {meta,results} em results/ + _index.json) + /eval-report para histórico de qualidade (tabela + HTML standalone offline para gestores). Question-creator NÃO lê kb.md — gera perguntas direto das fontes (Looker/Metabase), evitando 'alvo móvel'.",
   "author": {
     "name": "Tiago Lippi"
@@ -41,7 +41,12 @@
     {
       "name": "question-creator",
       "path": ".claude/agents/question-creator.md",
-      "description": "Gera knowledge-bases/<kb>/questions.json com gabarito_sql (query canônica da verdade). Chama os MCPs Looker/Metabase DIRETAMENTE (extrai a SQL real dos tiles/questions) e valida cada gabarito_sql no BigQuery read-only antes de gravar — NUNCA lê kb.md (anti 'alvo móvel'). Invocado pelo /create-kb apenas quando questions.json ainda não existe OU --regenerate-questions foi passado."
+      "description": "Gera as DUAS faces de perguntas: questions.public.json (id+pergunta) e questions.secret.json (gabarito_sql+unidade+esperava+tolerância). Chama os MCPs Looker/Metabase DIRETAMENTE (extrai a SQL real dos tiles/questions) e valida cada gabarito_sql no BigQuery read-only antes de gravar — NUNCA lê kb.md (anti 'alvo móvel'). Invocado pelo /create-kb apenas quando as faces ainda não existem OU --regenerate-questions foi passado."
+    },
+    {
+      "name": "golden-runner",
+      "path": ".claude/agents/golden-runner.md",
+      "description": "Executa a gabarito_sql de UMA pergunta contra o BigQuery read-only e devolve o valor de referência + prova (gabarito_job_id, gabarito_bytes). Lê questions.secret.json ele mesmo — é o ÚNICO ator que toca o gabarito e NUNCA monta o prompt do kb-evaluator. Invocado em paralelo pelo /run-eval e /create-kb depois que os avaliadores já responderam (isolamento do candidato)."
     }
   ],
   "mcpServers": {

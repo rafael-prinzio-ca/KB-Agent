@@ -4,6 +4,9 @@ knowledge-bases/*/results/
 # Relatórios HTML gerados por /eval-report (derivados, regeneráveis)
 knowledge-bases/*/reports/
 
+# Backups locais sem rotação (kb.md.bak.<ts>, questions.*.json.bak.<ts>) — não versionados
+knowledge-bases/*/*.bak.*
+
 # Secrets
 .env
 
