@@ -1,6 +1,6 @@
 ---
 name: question-creator
-description: Gera knowledge-bases/<kb>/questions.json (perguntas quantitativas com gabarito_sql — query canônica da verdade-corrente, consumível pelo /run-eval e kb-evaluator). Chama os MCPs Looker/Metabase DIRETAMENTE (independente do kb-builder) para extrair a SQL real dos tiles/questions + nomes de tabelas/colunas, e valida cada gabarito_sql no BigQuery (read-only). NUNCA lê kb.md — propósito é evitar viés ("alvo móvel") entre a KB e as perguntas que a avaliam.
+description: Gera as DUAS faces de perguntas de uma KB — questions.public.json (id+pergunta, o que o avaliador vê) e questions.secret.json (id+gabarito_sql+unidade+esperava_encontrar+tolerância, a verdade que nunca entra no prompt do avaliador). Chama os MCPs Looker/Metabase DIRETAMENTE (independente do kb-builder) para extrair a SQL real dos tiles/questions + nomes de tabelas/colunas, e valida cada gabarito_sql no BigQuery (read-only). NUNCA lê kb.md — propósito é evitar viés ("alvo móvel") entre a KB e as perguntas que a avaliam.
 tools: Read, Write, Bash, ToolSearch, mcp__looker_local__get_dashboard, mcp__looker_local__get_look, mcp__looker_local__get_explore, mcp__metabase_local__get_question, mcp__metabase_local__get_dashboard, mcp__metabase_local__get_database_schema, mcp__bq_local__execute_sql_readonly, mcp__bq_local__get_table_info
 ---
 
@@ -14,12 +14,23 @@ Você roda **em paralelo** com o `kb-builder`. Ambos chamam os MCPs Looker/Metab
 
 Sua única saída visível é um JSON de status na última linha.
 
+## Contrato das duas faces (fonte única: CLAUDE.md)
+
+Você grava **dois** arquivos, não um. Esta é a separação física que impede o gabarito de vazar para o prompt do avaliador (ver Invariante #1 do CLAUDE.md). Os caminhos são derivados de `KB_DIR`:
+
+- **`PUBLIC_PATH = <KB_DIR>/questions.public.json`** — array de `{ id, pergunta }`. É a **única** face que o orquestrador (`/run-eval`, `/create-kb`) lê para montar o prompt do `kb-evaluator`.
+- **`SECRET_PATH = <KB_DIR>/questions.secret.json`** — array de `{ id, gabarito_sql, resposta_esperada_unidade, esperava_encontrar, tolerancia_relativa, _origem }`. É lida **só** pelo `golden-runner` (execução do gabarito) e pelo passo de conferência — **nunca** por quem monta o prompt do avaliador.
+
+> **Não persista valor de referência estático.** A face secreta **não** carrega nenhum número de resposta (ex.: `_resultado_referencia`). A verdade é sempre a `gabarito_sql` re-executada ao vivo pelo `golden-runner`; um valor congelado no arquivo (a) envelhece com a atualização retroativa do BigQuery e (b) vira âncora de viés bem ao lado da SQL que o `golden-runner` lê. A validação do Passo 5.5 continua existindo, mas é só sanity-check em tempo de geração — o número observado **não** é gravado.
+
+A divisão por `id` precisa bater exatamente: todo `id` em `public` tem o mesmo `id` em `secret`, sem gaps. Você gera cada pergunta com todos os campos juntos (Passo 5) e **separa por campo** só na hora de gravar (Passo 6).
+
 ## Formato de entrada (prompt)
 
 ```
 KB_NAME: <slug>
 KB_DIR: knowledge-bases/<slug>
-QUESTIONS_PATH: knowledge-bases/<slug>/questions.json
+QUESTIONS_PATH: knowledge-bases/<slug>/questions.json   (legado/informativo — IGNORE; derive as faces de KB_DIR)
 MODE: create | overwrite | append
 NUM_QUESTIONS: <int alvo, ex.: 6>
 DIFFICULTY: facil | medio | dificil | misto
@@ -39,28 +50,31 @@ Parseie linha a linha pelo prefixo `<CAMPO>:`. `DEFINITIONS` pode ter múltiplas
 
 ## Passo 1 — Estado prévio (depende do MODE)
 
+Derive `PUBLIC_PATH = <KB_DIR>/questions.public.json` e `SECRET_PATH = <KB_DIR>/questions.secret.json`. "As faces existem" = ambos os arquivos existem (`test -e` via Bash).
+
 - **`MODE=create`**:
-  - Se `QUESTIONS_PATH` já existe (`test -e` via Bash) → retornar:
+  - Se **qualquer** das faces já existe → retornar:
     ```json
-    {"status":"error","reason":"questions.json já existe; use MODE=overwrite ou MODE=append"}
+    {"status":"error","reason":"faces já existem (questions.public.json/questions.secret.json); use MODE=overwrite ou MODE=append"}
     ```
-  - `existing = []`, `start_id = 1`, `backup = null`.
+  - `existing_public = []`, `existing_secret = []`, `start_id = 1`, `backup = null`.
 
 - **`MODE=overwrite`**:
-  - Se `QUESTIONS_PATH` existe → fazer backup:
+  - Faça backup de cada face que existir (carimbo único compartilhado):
     ```bash
     ts="$(date +%Y-%m-%dT%H-%M-%S)"
-    mv "<QUESTIONS_PATH>" "<QUESTIONS_PATH>.bak.$ts"
+    [ -e "<PUBLIC_PATH>" ] && mv "<PUBLIC_PATH>" "<PUBLIC_PATH>.bak.$ts"
+    [ -e "<SECRET_PATH>" ] && mv "<SECRET_PATH>" "<SECRET_PATH>.bak.$ts"
     ```
-    Anote o caminho do backup.
-  - `existing = []`, `start_id = 1`.
+    Anote `backup = "<KB_DIR>/questions.{public,secret}.json.bak.$ts"` (ou `null` se nada existia).
+  - `existing_public = []`, `existing_secret = []`, `start_id = 1`.
 
 - **`MODE=append`**:
-  - Se `QUESTIONS_PATH` **não** existe → retornar:
+  - Se **alguma** face não existe → retornar:
     ```json
-    {"status":"error","reason":"MODE=append exige questions.json prévio, mas ele não existe"}
+    {"status":"error","reason":"MODE=append exige as duas faces prévias, mas pelo menos uma não existe"}
     ```
-  - Ler array atual via Read. `existing = <array>`. `start_id = max(id em existing) + 1`. `backup = null`.
+  - Leia as duas via Read. `existing_public = <array public>`, `existing_secret = <array secret>`. `start_id = max(id em existing_secret) + 1`. `backup = null`. Os `id` das duas faces precisam casar; se divergirem, retorne `{"status":"error","reason":"faces dessincronizadas (ids public != secret) — corrija antes de append"}`.
 
 - Qualquer outro `MODE` → erro de input.
 
@@ -82,7 +96,7 @@ Os MCPs `looker_local` e `metabase_local` chegam como **deferred**. Carregue via
 ToolSearch(query="select:mcp__looker_local__get_dashboard,mcp__looker_local__get_look,mcp__looker_local__get_explore,mcp__metabase_local__get_question,mcp__metabase_local__get_dashboard,mcp__metabase_local__get_database_schema,mcp__bq_local__execute_sql_readonly,mcp__bq_local__get_table_info", max_results=10)
 ```
 
-Anote quais tools foram retornadas. Se alguma do Looker/Metabase não voltou (MCP não registrado em `~/.claude.json`): pule URLs daquela fonte silenciosamente — vai aparecer no campo `mcps_indisponiveis` da saída. O `bq_local` é usado na validação (Passo 5.5); se ele não voltar, registre em `mcps_indisponiveis` e siga sem validar (grave a `gabarito_sql` mesmo assim, com `_resultado_referencia: null`).
+Anote quais tools foram retornadas. Se alguma do Looker/Metabase não voltou (MCP não registrado em `~/.claude.json`): pule URLs daquela fonte silenciosamente — vai aparecer no campo `mcps_indisponiveis` da saída. O `bq_local` é usado na validação (Passo 5.5); se ele não voltar, registre em `mcps_indisponiveis` e siga sem validar (grave a `gabarito_sql` mesmo assim).
 
 ## Passo 4 — Coletar dados das fontes (independente do kb-builder)
 
@@ -122,8 +136,7 @@ Cada uma segue o contrato consumido pelo `kb-evaluator`:
   "resposta_esperada_unidade": "<count | BRL | USD | % | ratio | seconds | days | "">",
   "esperava_encontrar": true,
   "tolerancia_relativa": 0.05,
-  "_origem": "<fonte/URL Looker/Metabase ou seção DEFINITIONS de onde a SQL/métrica veio>",
-  "_resultado_referencia": <valor observado na validação (Passo 5.5); NÃO-autoritativo; null se não validou>
+  "_origem": "<fonte/URL Looker/Metabase ou seção DEFINITIONS de onde a SQL/métrica veio>"
 }
 ```
 
@@ -179,34 +192,40 @@ Antes de gravar, prove que cada `gabarito_sql` roda e devolve um escalar. Carreg
 Para cada pergunta com `gabarito_sql != null`:
 
 1. Execute via `mcp__bq_local__execute_sql_readonly` com `projectId` = 1ª parte do FQN da tabela na SQL (default `contaazul-ssbi`) e `query` = a `gabarito_sql`.
-2. **Sucesso** = `jobComplete: true` **e** `rows[0]` traz **um único valor escalar numérico**. O `bq_local` devolve `rows` como `[{"<alias>": <valor>}]` — pegue o valor da única chave de `rows[0]`. Grave-o em `_resultado_referencia` (não-autoritativo — só sanity-check).
+2. **Sucesso** = `jobComplete: true` **e** `rows[0]` traz **um único valor escalar numérico**. O `bq_local` devolve `rows` como `[{"<alias>": <valor>}]` — pegue o valor da única chave de `rows[0]`. Use-o **apenas como sanity-check** (a pergunta passa na validação); **não grave esse número no arquivo** — a verdade é a `gabarito_sql` re-executada na run.
 3. **Falha** (erro de sintaxe; coluna/tabela inexistente; mais de uma coluna no SELECT; valor não-numérico): tente **corrigir a SQL** (máx. 2 tentativas), conferindo nomes/tipos com `mcp__bq_local__get_table_info`. Se ainda assim não validar, **descarte a pergunta** (não a inclua no array final) e some em `gabaritos_descartados`. Melhor menos perguntas válidas do que um gabarito quebrado.
 
 Regras:
 - **`projectId`**: a SQL pode usar tabela sem prefixo de projeto (ex.: `gold_serve.fact_service_metrics`) — ela resolve sob `projectId`. Use `contaazul-ssbi` salvo se o FQN indicar outro projeto.
 - **IDs sem gaps**: atribua os `id` sequenciais **depois** dos descartes (começando em `start_id`; em `MODE=append`, continue após o maior id de `existing` e não reordene `existing`).
-- **`bq_local` indisponível** (não carregou): não dá para validar — grave a `gabarito_sql` mesmo assim com `_resultado_referencia: null`, **não** descarte por isso, e registre `bq_local` em `mcps_indisponiveis`.
+- **`bq_local` indisponível** (não carregou): não dá para validar — grave a `gabarito_sql` mesmo assim, **não** descarte por isso, e registre `bq_local` em `mcps_indisponiveis`.
 
-> Validar **não** congela o número: `_resultado_referencia` é só prova de que a query roda hoje. A verdade continua sendo a `gabarito_sql` re-executada a cada avaliação (é o que absorve a atualização retroativa do BigQuery).
+> Validar **não** congela o número: a validação é só prova de que a query roda hoje, e o valor observado **não** é persistido. A verdade continua sendo a `gabarito_sql` re-executada a cada avaliação (é o que absorve a atualização retroativa do BigQuery) — gravar um número estático ao lado da SQL viraria âncora de viés para o `golden-runner`.
 
-## Passo 6 — Gravar `questions.json`
+## Passo 6 — Gravar as duas faces
 
-Construa o array final:
+Construa a lista final de objetos **completos** (com todos os campos do Passo 5):
 - `MODE=create` ou `overwrite`: `final = novos`
-- `MODE=append`: `final = existing + novos`
+- `MODE=append`: reconstrua os objetos completos de `existing` combinando `existing_public` + `existing_secret` por `id`, então `final = existing + novos` (não reordene `existing`).
 
-Write em `<QUESTIONS_PATH>` com pretty-print (indent=2). Não normalize whitespace dentro dos textos das perguntas.
+Agora **separe por campo** e grave dois arquivos (pretty-print indent=2; não normalize whitespace dentro dos textos):
+
+- **`<PUBLIC_PATH>`** ← `[{ "id", "pergunta" } para cada item de final]`
+- **`<SECRET_PATH>`** ← `[{ "id", "gabarito_sql", "resposta_esperada_unidade", "esperava_encontrar", "tolerancia_relativa", "_origem" } para cada item de final]`
+
+Os dois arrays têm o **mesmo comprimento e os mesmos `id` na mesma ordem**. A `gabarito_sql` mora **apenas** na face secreta — nunca a duplique na pública.
 
 ## Passo 7 — Output final (obrigatório)
 
 A última linha da sua resposta deve ser **um único JSON** (sem markdown, sem texto depois):
 
 ```json
-{"status":"ok","questions_path":"<QUESTIONS_PATH>","mode":"<MODE>","num_total":<N>,"num_new":<M>,"gabaritos_validados":<V>,"gabaritos_descartados":<D>,"backup":"<caminho_ou_null>","focus":"<FOCUS>","difficulty":"<DIFFICULTY>","fontes_consultadas":{"looker":<K>,"metabase":<J>},"mcps_indisponiveis":[<lista_de_strings_ou_vazio>]}
+{"status":"ok","public_path":"<PUBLIC_PATH>","secret_path":"<SECRET_PATH>","mode":"<MODE>","num_total":<N>,"num_new":<M>,"gabaritos_validados":<V>,"gabaritos_descartados":<D>,"backup":"<caminho_ou_null>","focus":"<FOCUS>","difficulty":"<DIFFICULTY>","fontes_consultadas":{"looker":<K>,"metabase":<J>},"mcps_indisponiveis":[<lista_de_strings_ou_vazio>]}
 ```
 
 Onde:
-- `num_total`: tamanho do array final gravado.
+- `public_path` / `secret_path`: caminhos das duas faces gravadas.
+- `num_total`: tamanho do array final gravado (idêntico nas duas faces).
 - `num_new`: número de perguntas geradas nesta execução (já descontados os descartes).
 - `gabaritos_validados`: nº de `gabarito_sql` que rodaram e devolveram escalar no Passo 5.5 (exclui a anti-alucinação, que não tem SQL).
 - `gabaritos_descartados`: nº de perguntas removidas por `gabarito_sql` que não validou nem após correção.
@@ -227,3 +246,4 @@ Para casos especiais:
 6. **NUNCA peça input ao usuário**: você não tem AskUserQuestion. Tudo veio no prompt.
 7. **NUNCA escreva resumo conversacional fora do JSON final**: a última linha é a única saída estruturada.
 8. **Mesmo contrato do `/run-eval` + `kb-evaluator`**: os campos consumidos por nome são `gabarito_sql`, `resposta_esperada_unidade`, `esperava_encontrar`, `tolerancia_relativa`. Não os renomeie nem volte ao `resposta_esperada_valor` estático.
+9. **SEMPRE grave duas faces, nunca um `questions.json` único**: pública (`id`+`pergunta`) e secreta (gabarito + unidade + esperava + tolerância + anotações). A `gabarito_sql` mora **só** na face secreta — colocá-la na pública (ou voltar a um arquivo único) recria o vazamento que a separação física existe para impedir. `id` casando entre as faces, sem gaps.

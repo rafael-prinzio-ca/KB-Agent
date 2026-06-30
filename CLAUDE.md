@@ -6,32 +6,42 @@ Contexto para o Claude trabalhar neste repositório sem regredir invariantes. Co
 
 `kb-manager` é um plugin do Claude Code que constrói, versiona e avalia **Knowledge Bases sobre dados** (data dictionaries + perguntas-benchmark). Ciclo coberto por três slash commands: `/create-kb` (build/update), `/run-eval` (avaliação; `--quick` = check diário binário vs última run verde) e `/eval-report` (relatório histórico — leitura pura, gera HTML para gestores).
 
-Stack: slash commands + subagents Claude + 3 MCPs Python locais (`bq_local`, `looker_local`, `metabase_local`) que falam com BigQuery, Looker e Metabase.
+Stack: slash commands + subagents Claude (`kb-builder`, `question-creator`, `kb-evaluator`, `golden-runner`) + 3 MCPs Python locais (`bq_local`, `looker_local`, `metabase_local`) que falam com BigQuery, Looker e Metabase. Perguntas vivem em **duas faces** (pública/secreta) e o gabarito é executado por um ator isolado (`golden-runner`) — ver Invariante #1 e #7.
 
 ## Invariantes — NÃO QUEBRAR
 
 Estes são os "porquês" do design. Mudar qualquer um exige discussão explícita com o usuário antes.
 
-### 1. `question-creator` NUNCA lê `kb.md`
+### 1. Isolamento do gabarito — duas faces + `question-creator` NUNCA lê `kb.md`
 
-O agente de perguntas chama os MCPs Looker/Metabase **diretamente**, não derivado da KB. Motivo: se perguntas saíssem do `kb.md`, KB e benchmark evoluiriam juntos (problema do "alvo móvel") e seria impossível medir melhoria entre versões. Se for tentado refatorar para "reaproveitar contexto", **pare e confirme**.
+Duas blindagens contra o mesmo risco (o benchmark "casar" com a KB e a avaliação medir cópia em vez de qualidade):
+
+**(a) `question-creator` NUNCA lê `kb.md`.** O agente de perguntas chama os MCPs Looker/Metabase **diretamente**, não derivado da KB. Motivo: se perguntas saíssem do `kb.md`, KB e benchmark evoluiriam juntos ("alvo móvel") e seria impossível medir melhoria entre versões. Se for tentado refatorar para "reaproveitar contexto", **pare e confirme**.
+
+**(b) Perguntas vivem em DUAS FACES; o orquestrador lê só a pública.** O `questions.json` único foi dividido (separação **física**, não instrucional) em:
+- **`questions.public.json`** — array de `{ id, pergunta }`. **Única** face que o orquestrador (`/run-eval`, `/create-kb`) lê para montar o prompt do `kb-evaluator`.
+- **`questions.secret.json`** — `{ id, gabarito_sql, resposta_esperada_unidade, esperava_encontrar, tolerancia_relativa, _* }`. Lida **exclusivamente** pelo subagente `golden-runner`; **nunca** por quem monta o prompt do avaliador.
+
+Motivo do design: enquanto o gabarito estivesse ao alcance de quem prepara o prompt, o vazamento era possível (e aconteceu — o orquestrador codificou a fórmula da resposta no prompt do avaliador, com colunas inexistentes no `kb.md`). A separação em faces + a ordem do fluxo (avaliadores **antes** do `golden-runner`) tornam isso fisicamente impossível: no momento da montagem do prompt, o orquestrador nunca viu a `gabarito_sql`.
 
 Aplicação prática:
-- `question-creator.md` não recebe e não deve ler `KB_PATH`.
+- `question-creator.md` não recebe e não deve ler `KB_PATH`; grava as **duas faces** (gabarito só na secreta).
+- O orquestrador **nunca** abre `questions.secret.json`. A `gabarito_sql`/`valor_gabarito` chegam só como **retorno do `golden-runner`**, e só depois que os avaliadores responderam.
 - Em `--regenerate-questions`, perguntas vêm das fontes novamente, não do `kb.md` atual.
-- Default em update de KB existente: **manter `questions.json` intacto** (alvo fixo).
+- Default em update de KB existente: **manter as faces intactas** (alvo fixo).
+- Se for tentado voltar a um `questions.json` único, ou pôr `gabarito_sql` na face pública, ou ler a secreta no orquestrador: **pare e confirme**.
 
 ### 2. Champion-vs-candidate é o caminho de update
 
-Em `/create-kb` com `kb.md` existente, o builder escreve em `kb-candidate.md` (nunca sobrescreve direto). Avalia ambos com as MESMAS perguntas, mostra diff e pergunta se promove. Se for tentado "atualizar in-place", **pare e confirme**.
+Em `/create-kb` com `kb.md` existente, o builder escreve em `kb-candidate.md` (nunca sobrescreve direto). Avalia ambos com as MESMAS perguntas (mesma face pública; mesmo `valor_gabarito` do `golden-runner`, computado uma vez), mostra diff e pergunta se promove. Se for tentado "atualizar in-place", **pare e confirme**.
 
 ### 3. Claude principal é o ÚNICO ponto de interação com o usuário
 
-Subagents (`kb-builder`, `question-creator`, `kb-evaluator`) **não fazem AskUserQuestion**. O orquestrador coleta tudo upfront e passa via prompt estruturado. Não adicione `AskUserQuestion` na definição de subagent.
+Subagents (`kb-builder`, `question-creator`, `kb-evaluator`, `golden-runner`) **não fazem AskUserQuestion**. O orquestrador coleta tudo upfront e passa via prompt estruturado. Não adicione `AskUserQuestion` na definição de subagent.
 
-### 4. `kb-evaluator` retorna prova de execução
+### 4. `kb-evaluator` e `golden-runner` retornam prova de execução
 
-Saída obrigatória inclui `sql_executado`, `bytes_processed`, `job_id`. Se algum vier `null` quando `encontrada: true`, o subagente alucinou — `/run-eval` valida via `execucao_ok` e reprova. Não relaxe essa validação.
+Saída obrigatória do `kb-evaluator` inclui `sql_executado`, `bytes_processed`, `job_id`. Se algum vier `null` quando `encontrada: true`, o subagente alucinou — `/run-eval` valida via `execucao_ok` e reprova. O `golden-runner` é validado do mesmo jeito: `gabarito_ok` só vale com `gabarito_job_id`/`gabarito_bytes` reais. É essa **validação de prova** que garante o determinismo do gabarito mesmo ele sendo executado por um subagente (LLM) — não relaxe nenhuma das duas.
 
 ### 5. BigQuery é read-only
 
@@ -39,16 +49,27 @@ MCP `bq_local` usa `execute_sql_readonly`. Nunca trocar por `execute_sql` (que p
 
 ### 6. Observabilidade é camada não-invasiva por cima do núcleo
 
-Snapshots são `{ meta, results }` (o array por-pergunta vai em `results`, **inalterado**); `results/_index.json` é append-only e **derivado** (reconstruível varrendo snapshots; falha de escrita nunca aborta); `/eval-report` é **leitura pura** (sem agentes, sem BigQuery). Hashes e índice nunca abortam uma run. Tudo isso foi adicionado **sem tocar os 3 subagents** — o carimbo de `meta` é feito pelos orquestradores. Não mova lógica de observabilidade para dentro dos subagents nem torne a escrita do índice fatal.
+Snapshots são `{ meta, results }` (o array por-pergunta vai em `results`, **inalterado**); `results/_index.json` é append-only e **derivado** (reconstruível varrendo snapshots; falha de escrita nunca aborta); `/eval-report` é **leitura pura** (sem agentes, sem BigQuery). Hashes (incluindo `kb_prompt_hash`/`kb_integra` do Invariante #8) e índice nunca abortam uma run. Tudo isso foi adicionado **sem tocar os subagents** — o carimbo de `meta` é feito pelos orquestradores. Não mova lógica de observabilidade para dentro dos subagents nem torne a escrita do índice fatal.
 
-### 7. Gabarito dinâmico — a verdade é a `gabarito_sql` executada na run
+### 7. Gabarito dinâmico — a verdade é a `gabarito_sql` executada na run, por um ator isolado
 
-Cada pergunta do `questions.json` carrega uma `gabarito_sql` (query canônica). A "resposta certa" **não** é um número estático — é o resultado de rodar essa SQL **na própria run**, contra o BigQuery ao vivo. Motivo: o banco sofre **atualização retroativa**, então um valor congelado fica errado sem a KB ter piorado. Regras que sustentam o design (mudar exige discussão):
+Cada pergunta carrega uma `gabarito_sql` (query canônica, na **face secreta**). A "resposta certa" **não** é um número estático — é o resultado de rodar essa SQL **na própria run**, contra o BigQuery ao vivo. Motivo: o banco sofre **atualização retroativa**, então um valor congelado fica errado sem a KB ter piorado. Regras que sustentam o design (mudar exige discussão):
 
-- A `gabarito_sql` é executada **verbatim pelo orquestrador** (`/run-eval` Passo 2.5, `/create-kb` Passo 6a.5) via `execute_sql_readonly` — **nunca regenerada, corrigida ou otimizada** em runtime (determinismo = verdade não-alucinada). Falha de execução vira `status = "erro_gabarito"`, **não** reprovação do candidato.
-- A `gabarito_sql` **NUNCA** entra no prompt do `kb-evaluator`. O candidato chega ao número só pela KB — senão a avaliação vira cópia. (Reforça o Invariante #1: o gabarito vem de fonte independente da KB; KB errada não "casa" com gabarito errado.)
+- A `gabarito_sql` é executada **verbatim pelo subagente `golden-runner`** (`/run-eval` Passo 5, `/create-kb` Passo 6d), via `execute_sql_readonly` — **nunca regenerada, corrigida ou otimizada** em runtime. O `golden-runner` é o **único** ator que lê a face secreta; o orquestrador **não** executa o gabarito e nunca o lê do disco. Determinismo é garantido pela **validação de prova** (`gabarito_job_id`/`gabarito_bytes`, Invariante #4), não por "quem executou". Falha de execução vira `status = "erro_gabarito"`, **não** reprovação do candidato.
+  > Mudança de design (autorizada): antes o orquestrador executava o gabarito inline. Foi movido para o `golden-runner` para isolamento físico — o orquestrador que monta o prompt do avaliador nunca segura a `gabarito_sql`. Reverter para execução no orquestrador reabre o vetor de vazamento do Invariante #1.
+- A `gabarito_sql` **NUNCA** entra no prompt do `kb-evaluator`. O candidato chega ao número só pela KB — senão a avaliação vira cópia. (Reforça o Invariante #1.)
+- A ordem do fluxo é parte do invariante: **avaliadores primeiro** (a partir da face pública), **`golden-runner` depois**. O gabarito só entra no contexto do orquestrador (como retorno do `golden-runner`, para gravar no snapshot) **após** os prompts dos avaliadores já terem sido enviados.
 - `valor_gabarito` é gravado no snapshot (auditável via `gabarito_job_id`) mas **varia entre runs** por design. A comparação longitudinal é por **`status` por pergunta**, não por valor absoluto — por isso o status fica estável apesar do drift de dados.
-- O `question-creator` gera `gabarito_sql` (extraída da SQL real das fontes — `query.sql` do Looker/Metabase nativo — e **validada no BigQuery read-only**, Passo 5.5; gabarito que não valida é descartado). Os commands ainda toleram o formato legado (`resposta_esperada_valor`) **na leitura**, mas a geração nova já é dinâmica — `--regenerate-questions` produz gabaritos dinâmicos. Para isso o `question-creator` ganhou `mcp__bq_local__execute_sql_readonly` (read-only — não fere o Invariante #5) só para validação; continua **sem ler `kb.md`** (Invariante #1 intacto).
+- O `question-creator` gera `gabarito_sql` (extraída da SQL real das fontes — `query.sql` do Looker/Metabase nativo — e **validada no BigQuery read-only**, Passo 5.5; gabarito que não valida é descartado) e a grava **só na face secreta**. Para isso usa `mcp__bq_local__execute_sql_readonly` (read-only — não fere o Invariante #5) só para validação; continua **sem ler `kb.md`** (Invariante #1 intacto).
+
+### 8. Verificação de KB íntegra — `kb_prompt_hash` vs `kb_hash`
+
+O avaliador (`kb-evaluator`) precisa receber o `kb.md` **inteiro** (já foi violado uma vez por um recorte de KB por pergunta). Para tornar isso auditável, o orquestrador grava no `meta` do snapshot:
+- `kb_hash` — sha256(16) do `kb.md` **em disco**.
+- `kb_prompt_hash` — sha256(16) do conteúdo que **de fato foi enviado** ao avaliador (o `KB_CONTENT` concatenado, hasheado via arquivo de scratch).
+- `kb_integra = (kb_prompt_hash == kb_hash)`.
+
+Se divergirem, a run é marcada **suspeita** (KB possivelmente truncada/recortada/adulterada no caminho) e o `/run-eval` sinaliza na saída. Fallback: hash que não computa vira `"unknown"`, `kb_integra = null`. **Nunca aborta por isso** — é flag, não gate. Em `/create-kb` há um par por lado (champion e candidate, cada um contra seu próprio arquivo em disco).
 
 ## Layout (o que é versionado vs gerado)
 
@@ -57,7 +78,7 @@ Cada pergunta do `questions.json` carrega uma `gabarito_sql` (query canônica). 
 - `.claude/agents/*.md` — subagents (project-local)
 - `.claude-plugin/plugin.json` — manifesto
 - `.claude-plugin/mcps/<name>/{server.py,requirements.txt}` — **source-of-truth dos MCPs**
-- `knowledge-bases/<kb>/{kb.md,questions.json}` — KBs (conteúdo curado)
+- `knowledge-bases/<kb>/{kb.md,questions.public.json,questions.secret.json}` — KBs (conteúdo curado; perguntas em duas faces, ver Invariante #1)
 - `scripts/sync-repos.sh`, `setup-mcp.sh`, `.env.example`
 
 **Gerado (gitignored — ver [.gitignore](.gitignore)):**
@@ -69,20 +90,21 @@ Cada pergunta do `questions.json` carrega uma `gabarito_sql` (query canônica). 
 
 **Backups (no disco, sem rotação):**
 - `kb.md.bak.<ts>` ao promover candidate
-- `questions.json.bak.<ts>` ao `--regenerate-questions`
+- `questions.public.json.bak.<ts>` e `questions.secret.json.bak.<ts>` ao `--regenerate-questions` (carimbo `<ts>` compartilhado entre as duas faces)
+- `questions.json.bak.<ts>` legado — backup do `questions.json` único na migração para faces (não regenerado)
 - `kb-candidate.md` é efêmero — em execução interrompida fica órfão; `/create-kb` no Passo 1a trata.
 
 ## Convenções
 
 - **Slug de KB**: `[a-z0-9-]+` (minúsculas, dígitos, hífens). Sem espaços, acentos, underscores. Validado no Passo 1 de `/create-kb`.
 - **Idioma**: tudo em português (commands, agents, README, mensagens). Manter consistência.
-- **Snapshots `results/`** (formato `{ meta, results }`; `meta` carrega `kb`, `run_id`, `kb_hash`, `questions_hash`, `mode`, agregados `aprovados`/`reprovados`/`erros_gabarito`/`total`/`confianca_media` e `bytes_total`):
+- **Snapshots `results/`** (formato `{ meta, results }`; `meta` carrega `kb`, `run_id`, `kb_hash`, `kb_prompt_hash`, `kb_integra`, `questions_hash`, `mode`, agregados `aprovados`/`reprovados`/`erros_gabarito`/`total`/`confianca_media` e `bytes_total`):
   - `<ts>.json` = canônico (`mode` `full`/`quick`; de `/run-eval` ou pós-promoção)
   - `<ts>.champion.json` / `<ts>.candidate.json` = staging do champion-vs-candidate (`mode` `champion`/`candidate`); na consolidação viram `<ts>.json` com `mode` reescrito p/ `full`
   - `_index.json` = índice append-only (uma entrada `meta` por run canônica; staging **não** entra). Derivado: reconstruível; falha de escrita nunca aborta
-  - Hashes = sha256 (16 chars) de `kb.md`/`questions.json`; `"unknown"` se falhar
-  - Cada item de `results` tem 3 `status` possíveis: `aprovado` / `reprovado` / `erro_gabarito` (gabarito não executou). Campos de gabarito por item: `gabarito_sql`, `valor_gabarito`, `gabarito_job_id`, `gabarito_bytes`, `gabarito_ok`. `bytes_total` soma candidato **+** gabarito.
-  - Snapshots antigos (array nu, ou com `resposta_esperada_valor` em vez de `gabarito_sql`) são tolerados na leitura e **nunca** reescritos
+  - Hashes = sha256 (16 chars); `"unknown"` se falhar. `kb_hash` = de `kb.md` em disco; `kb_prompt_hash` = do conteúdo enviado ao avaliador (Invariante #8); `questions_hash` = da **face secreta** (`questions.secret.json` — é ela que define a identidade do benchmark)
+  - Cada item de `results` tem 3 `status` possíveis: `aprovado` / `reprovado` / `erro_gabarito` (gabarito não executou). Campos de gabarito por item (vindos do `golden-runner`): `gabarito_sql`, `valor_gabarito`, `gabarito_job_id`, `gabarito_bytes`, `gabarito_ok`. `bytes_total` soma candidato **+** gabarito.
+  - Snapshots antigos (array nu, sem `meta`/`kb_prompt_hash`, ou com `resposta_esperada_valor`) são tolerados na leitura e **nunca** reescritos
 - **Datas relativas** em prompts/AskUserQuestion: sempre converter para absoluto antes de gravar em `kb.md`.
 
 ## Workflow de mudanças comuns
@@ -109,8 +131,11 @@ Após mudar `.claude/commands/`, `.claude/agents/` ou `.claude-plugin/plugin.jso
 - **Pergunta histórica que sempre passou reprovou**: pode ser drift de dados no BigQuery (legítimo — atualize `kb.md`) ou tolerância apertada demais. Não relaxe tolerância sem confirmar.
 - **`kb-candidate.md` órfão**: execução anterior interrompida. `/create-kb` Passo 1a trata com AskUserQuestion (descartar/usar/abortar). Não delete preventivamente.
 - **Editar `mcp-bq/server.py` direto**: será sobrescrito no próximo `setup-mcp.sh`. Sempre `.claude-plugin/mcps/bq/server.py`.
-- **Alerta de regressão sumiu / aparece `ℹ alvo móvel`**: se `questions_hash` mudou entre runs (ex.: `--regenerate-questions`), a comparação por pergunta é suprimida **de propósito** (alvo móvel) — não é bug. Para voltar a comparar, mantenha `questions.json` fixo entre runs.
+- **Alerta de regressão sumiu / aparece `ℹ alvo móvel`**: se `questions_hash` mudou entre runs (ex.: `--regenerate-questions`), a comparação por pergunta é suprimida **de propósito** (alvo móvel) — não é bug. Para voltar a comparar, mantenha as faces (`questions.secret.json`) fixas entre runs.
 - **`/eval-report` diz "Nenhuma avaliação encontrada"**: não há snapshots em `results/`. Rode `/run-eval <kb>` primeiro. Apagar `_index.json` **não** perde histórico — ele é reconstruído varrendo os snapshots.
+- **`/run-eval` diz "questions.secret.json ausente" ou "questions.json legado detectado"**: a KB ainda não tem as duas faces. Rode `/create-kb <kb> --regenerate-questions` para gerar/migrar. O `/run-eval` **não** lê o `questions.json` único antigo (a separação em faces é pré-requisito do isolamento do gabarito, Invariante #1).
+- **Run marcada "suspeita" / `kb_integra: false`**: o conteúdo de KB enviado ao avaliador não bateu com o `kb.md` em disco (`kb_prompt_hash != kb_hash`) — provável KB truncada na leitura (Passo 2) ou editada durante a run. Não é abort; é flag. Investigue antes de confiar no placar e rode de novo.
+- **`projectId` default `contaazul-ssbi`**: é um default com override ("1ª parte do FQN") usado em `/run-eval`, `golden-runner`, `kb-evaluator` e `question-creator`. Uma KB em outro projeto GCP funciona **se** os FQN nas SQLs carregarem o projeto. Se for criar KB multi-projeto e o default atrapalhar, é caso de tornar o projeto configurável por-KB — discuta antes (não espalhe mais hardcode).
 
 ## Como começar a trabalhar aqui
 

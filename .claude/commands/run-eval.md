@@ -1,16 +1,18 @@
 ---
-description: Avalia uma KB pronta — roda kb-evaluator paralelo (uma instância por pergunta) contra BigQuery, grava snapshot em results/. Requer kb.md e questions.json prévios (use /create-kb se não existirem). Uso `/run-eval <kb> [--quick]` (ex.: `/run-eval suporte`; `--quick` = check diário binário vs última run verde).
+description: Avalia uma KB pronta — roda kb-evaluator paralelo (uma instância por pergunta) contra BigQuery, grava snapshot em results/. Requer kb.md e as faces de perguntas prévios (use /create-kb se não existirem). Uso `/run-eval <kb> [--quick]` (ex.: `/run-eval suporte`; `--quick` = check diário binário vs última run verde).
 ---
 
 # Avaliação da KB (BigQuery)
 
 Você (Claude principal) é o orquestrador. Sua única responsabilidade neste command é **rodar a avaliação** de uma KB já construída. Nada de sync, build ou geração de perguntas — tudo isso é responsabilidade do `/create-kb`.
 
-Se `kb.md` ou `questions.json` não existem, este command **não constrói** — apenas aponta para `/create-kb`.
+Se `kb.md` ou as faces de perguntas não existem, este command **não constrói** — apenas aponta para `/create-kb`.
+
+> **Isolamento do gabarito (a razão de ser deste fluxo).** As perguntas vivem em **duas faces** (Invariante #1 do CLAUDE.md): a **pública** (`questions.public.json` — `id`+`pergunta`) e a **secreta** (`questions.secret.json` — `gabarito_sql`+unidade+esperava+tolerância). **Você (orquestrador) lê SÓ a face pública.** A face secreta é lida exclusivamente pelo subagente `golden-runner`, que executa o gabarito e nunca monta prompt de avaliador. Por isso a ordem importa: você dispara os avaliadores a partir da face pública **antes** de qualquer gabarito existir no seu contexto — assim a fórmula da resposta é fisicamente incapaz de vazar para o prompt do candidato.
 
 ## Passo 0 — Validar `<kb>` + flags
 
-1. Capture `<kb>` e detecte `--quick` em ARGUMENTS → `QUICK_MODE = true|false`. (`--quick` = check diário binário: mesma avaliação, baseline = última run verde, saída curta. Ver Passos 7 e 8.)
+1. Capture `<kb>` e detecte `--quick` em ARGUMENTS → `QUICK_MODE = true|false`. (`--quick` = check diário binário: mesma avaliação, baseline = última run verde, saída curta. Ver Passos 8 e 9.)
 2. **Se `<kb>` ausente/vazio**: liste KBs disponíveis via Bash:
    ```
    Uso: /run-eval <kb> [--quick]
@@ -21,65 +23,41 @@ Se `kb.md` ou `questions.json` não existem, este command **não constrói** —
 4. Defina:
    - `KB_DIR = knowledge-bases/<kb>`
    - `KB_PATH = <KB_DIR>/kb.md`
-   - `QUESTIONS_PATH = <KB_DIR>/questions.json`
+   - `PUBLIC_PATH = <KB_DIR>/questions.public.json`
+   - `SECRET_PATH = <KB_DIR>/questions.secret.json`
    - `RESULTS_DIR = <KB_DIR>/results`
 
 ## Passo 1 — Validar artefatos
 
 Via Bash `test -e`:
 - **Se `<KB_PATH>` não existe**: imprima `kb.md ausente em <KB_PATH>. Rode /create-kb <kb> primeiro.` Pare.
-- **Se `<QUESTIONS_PATH>` não existe**: imprima `questions.json ausente em <QUESTIONS_PATH>. Rode /create-kb <kb> primeiro.` Pare.
+- **Se `<PUBLIC_PATH>` não existe**: imprima `questions.public.json ausente em <PUBLIC_PATH>. Rode /create-kb <kb> primeiro.` Pare.
+- **Se `<SECRET_PATH>` não existe**: imprima `questions.secret.json ausente em <SECRET_PATH>. Rode /create-kb <kb> --regenerate-questions para gerar as faces.` Pare.
+
+> **Formato legado (`questions.json` único, sem faces).** Se `questions.public.json` não existe mas existe um `questions.json` antigo no diretório, imprima:
+> `Detectado questions.json legado (formato antigo, sem faces). Rode /create-kb <kb> --regenerate-questions para migrar para as duas faces, ou migre manualmente.` e pare. Este command **não** lê o formato antigo — a separação em faces é pré-requisito do isolamento do gabarito.
 
 Sem sync de repos. Sem AskUserQuestion. Sem agents de build. Este command é deliberadamente enxuto.
 
-## Passo 2 — Carregar inputs
+## Passo 2 — Carregar KB + face pública (NUNCA a secreta)
 
 1. Leia `<KB_PATH>` **integralmente**, guiando-se pela contagem real de linhas (KBs variam de tamanho por fonte de negócio — suporte, churn, etc. — e podem exceder 25K tokens). O número de chamadas **não é fixo**: depende do tamanho do `kb.md` desta run.
 
    a. Meça primeiro: `TOTAL_LINHAS = $(wc -l < "<KB_PATH>")` via Bash.
    b. Leia em janelas sequenciais cobrindo de `offset=1` até `TOTAL_LINHAS`, ex.: `Read(limit=650)`, `Read(offset=650, limit=650)`, `Read(offset=1300, limit=650)`… **até atingir `TOTAL_LINHAS`**. Para a maioria das KBs (≤ ~1300 linhas) isso são 2 chamadas; KBs maiores exigem mais — nunca pare antes do EOF.
-   c. Concatene **todas** as janelas em `KB_CONTENT`, na ordem.
+   c. Concatene **todas** as janelas (conteúdo limpo, sem os prefixos de número de linha do Read) em `KB_CONTENT`, na ordem.
 
-   > **Anti-truncamento (invariante I2b — KB completa por avaliador).** A regra é genérica e dirigida pela contagem (`wc -l`), não por um número fixo de leituras: vale para a KB atual e para qualquer KB nova de tamanho desconhecido. Entregar KB **parcial** ao avaliador viola o I2b tão gravemente quanto recortá-la por pergunta — o avaliador isolado precisa do `kb.md` inteiro. **Nunca dispare os `kb-evaluator` com a KB truncada.**
+   > **Anti-truncamento (invariante I2b — KB completa por avaliador).** A regra é genérica e dirigida pela contagem (`wc -l`), não por um número fixo de leituras: vale para a KB atual e para qualquer KB nova de tamanho desconhecido. Entregar KB **parcial** ao avaliador viola o I2b tão gravemente quanto recortá-la por pergunta — o avaliador isolado precisa do `kb.md` inteiro. **Nunca dispare os `kb-evaluator` com a KB truncada.** (O Passo 7.2 carimba um hash do que de fato foi enviado, para tornar isso auditável.)
 
-2. Leia `<QUESTIONS_PATH>` e parseie. Esperado: array de objetos com:
-   - `id` (number), `pergunta` (string), `gabarito_sql` (string — query canônica da verdade-corrente; pode faltar quando `esperava_encontrar=false`), `resposta_esperada_unidade` (string), `esperava_encontrar` (boolean), `tolerancia_relativa` (number). Campos `_*` (ex.: `_origem`, `_resultado_referencia_*`) são anotações — ignoradas pela lógica.
-   - **Formato legado tolerado**: pergunta com `resposta_esperada_valor` (number) e **sem** `gabarito_sql` usa o caminho estático (Passo 5, ramo legado). Nunca obrigue `gabarito_sql` em KB antiga.
+2. Leia **somente** `<PUBLIC_PATH>` e parseie. Esperado: array de objetos `{ id (number), pergunta (string) }`. Guarde como `PERGUNTAS`. **Não leia `<SECRET_PATH>`** — ela não entra no seu contexto neste passo nem em nenhum momento da montagem dos prompts. Quem a lê é o `golden-runner` (Passo 5).
 
-## Passo 2.5 — Executar o gabarito (verdade-corrente da run)
+## Passo 3 — Disparar N kb-evaluator em paralelo (só com a face pública)
 
-A verdade de cada pergunta **não é estática** — é o resultado de rodar a `gabarito_sql` **agora**, contra o BigQuery ao vivo. Isso absorve atualização retroativa dos dados: o número certo de ontem pode não ser o de hoje, e o gabarito acompanha automaticamente.
-
-Carregue a tool via ToolSearch (`select:mcp__bq_local__execute_sql_readonly`).
-
-Para **cada** pergunta:
-
-- **Se `esperava_encontrar == false` OU a pergunta não tem `gabarito_sql`** (formato legado): pule a execução. `valor_gabarito = null`, `gabarito_ok = null`. (Legado usa `resposta_esperada_valor` no Passo 5; `esperava_encontrar=false` não tem verdade numérica.)
-- **Senão**: execute a `gabarito_sql` **verbatim** via `mcp__bq_local__execute_sql_readonly`, com:
-  - `projectId` = primeira parte do FQN da tabela (default `contaazul-ssbi` — as tabelas sem prefixo, como `gold_serve.fact_service_metrics`, resolvem nesse projeto).
-  - `query` = a string literal de `gabarito_sql`.
-
-  Pode disparar várias chamadas em paralelo (vários `tool_use` por mensagem). Da resposta:
-  - `valor_gabarito` ← o **único valor escalar** de `rows[0]`. O `bq_local` devolve `rows` como lista de objetos `{ "<alias>": <valor> }` (ex.: `[{"fact_service_metrics_sum_of_demanded": 5247}]`) — pegue o valor da única chave de `rows[0]` e converta para number. (Não é o shape `{"f":[{"v":...}]}` — esse é o exemplo da doc do kb-evaluator, não o retorno real desta tool.)
-  - `gabarito_job_id` ← `queryId`.
-  - `gabarito_bytes` ← `totalBytesProcessed` (string → integer).
-  - `gabarito_ok = true` se a query rodou (`jobComplete: true`) e `rows[0]` tem um escalar numérico; `false` se falhou (erro de sintaxe, tabela inexistente, permissão), `rows` veio vazio ou o valor não é numérico.
-
-### Anti-alucinação do orquestrador (CRÍTICO)
-
-- A `gabarito_sql` é executada **literalmente**. Você **NUNCA** a reescreve, "corrige", otimiza ou regenera. Determinismo é o que garante que a verdade não é alucinada.
-- `valor_gabarito` vem **exclusivamente** do retorno da tool. Sem execução real → `null`, `gabarito_ok = false`. Nunca preencha com um número plausível.
-- Se a `gabarito_sql` falhar, **não conserte a query nesta run**: marque `gabarito_ok = false`. Corrigir o gabarito é manutenção do `questions.json` (fonte = curadoria/Notion), não tarefa da avaliação. A pergunta vira `status = "erro_gabarito"` no Passo 5 — não é culpa do candidato.
-
-> **Isolamento do candidato (invariante).** A `gabarito_sql` é do orquestrador. Ela **NUNCA** entra no prompt do `kb-evaluator` (Passo 3) — o candidato precisa chegar ao número usando só a KB. Se a SQL-verdade vazasse para o candidato, a avaliação viraria cópia, não medição.
-
-## Passo 3 — Disparar N kb-evaluator em paralelo
-
-Para **cada** pergunta no array, invoque `Agent` com:
+Para **cada** item de `PERGUNTAS`, invoque `Agent` com:
 
 - `subagent_type`: `kb-evaluator`
 - `description`: `"Avalia pergunta #<id>"`
-- `prompt`: template abaixo, substituindo `<KB_CONTENT>` e `<PERGUNTA>`.
+- `prompt`: template abaixo, substituindo `<KB_CONTENT>` e `<PERGUNTA>` (a `pergunta` da face pública).
 
 Template:
 ```
@@ -95,11 +73,12 @@ Responda apenas com o objeto JSON especificado na sua definição. Sem texto ant
 ### Regras críticas
 
 - **Todas as N chamadas em uma única mensagem** com múltiplos `tool_use` no mesmo turno → execução paralela.
-- Cada subagente recebe **somente uma pergunta**. Nunca passe múltiplas.
+- Cada subagente recebe **somente uma pergunta** (a pública). Nunca passe múltiplas.
 - KB completa em **cada** prompt (canal único de informação textual).
 - **Nunca passe `KB_PATH:` no prompt** do subagente — passe o conteúdo literal.
+- Neste momento seu contexto **não tem nenhuma `gabarito_sql` nem valor de gabarito** — e é exatamente assim que tem de ser. Não leia a face secreta "para adiantar".
 
-## Passo 4 — Coletar respostas (parse tolerante)
+## Passo 4 — Coletar respostas dos avaliadores (parse tolerante)
 
 Para cada resposta:
 
@@ -109,37 +88,61 @@ Para cada resposta:
 4. Se falhar, registre `parse_error: true`, `_raw_output: "<truncado>"`, siga.
 5. Se OK, capture: `encontrada`, `valor`, `unidade`, `confianca`, `confianca_score`, `explicacao`, `sql_executado`, `bytes_processed`, `job_id`. Sinalize `parse_lenient: true` quando precisou de strip.
 
-## Passo 5 — Avaliar (comparação numérica)
+## Passo 5 — Estabelecer a verdade via `golden-runner` (depois que os avaliadores já responderam)
 
-Para cada pergunta:
+A verdade de cada pergunta **não é estática** — é o resultado de rodar a `gabarito_sql` **agora**, contra o BigQuery ao vivo. Isso absorve atualização retroativa dos dados: o número certo de ontem pode não ser o de hoje, e o gabarito acompanha automaticamente. **E o gabarito é executado por um ator isolado** (`golden-runner`), não por você — você nunca lê a `gabarito_sql`.
 
-### 5.0 `gabarito_ok` e `valor_referencia` (precede tudo)
+Para **cada** item de `PERGUNTAS`, invoque `Agent` com:
 
-Define qual é a verdade contra a qual o candidato será comparado:
+- `subagent_type`: `golden-runner`
+- `description`: `"Gabarito #<id>"`
+- `prompt`:
+  ```
+  KB_DIR: <KB_DIR>
+  QUESTION_ID: <id>
+  ```
 
-- **Pergunta com `gabarito_sql` e `esperava_encontrar == true`:**
-  - Se `gabarito_ok == false` (do Passo 2.5): a verdade não pôde ser estabelecida nesta run → `status = "erro_gabarito"`. **Pule 5.1–5.5 para esta pergunta.** Registre `valor_referencia = null`, `delta_absoluto = null`, `delta_relativo = null`, `dentro_tolerancia = false`. Não é culpa do candidato — é o benchmark que quebrou.
-  - Se `gabarito_ok == true`: `valor_referencia = valor_gabarito`. Siga para 5.1.
-- **Formato legado (sem `gabarito_sql`):** `valor_referencia = resposta_esperada_valor`. Nunca há `erro_gabarito`.
-- **`esperava_encontrar == false`:** sem verdade numérica; `valor_referencia = null` (a avaliação é só sobre `encontrada`, ver 5.1).
+### Regras críticas
 
-### 5.1 `encontrada_ok`
+- **Todas as N chamadas em uma única mensagem** (paralelo), igual aos avaliadores.
+- **Só dispare os `golden-runner` depois de coletar as respostas dos avaliadores (Passo 4).** A ordem é o que garante o isolamento: quando o gabarito entra no seu contexto (como retorno do `golden-runner`), os prompts dos avaliadores já foram enviados e respondidos — não há mais onde vazar.
+- Você **não** monta a SQL nem a passa no prompt: passa só `KB_DIR` + `id`. O `golden-runner` lê a face secreta sozinho.
+
+Colete de cada `golden-runner` (parse tolerante igual ao Passo 4): `id`, `esperava_encontrar`, `gabarito_sql`, `resposta_esperada_unidade`, `tolerancia_relativa`, `valor_gabarito`, `gabarito_job_id`, `gabarito_bytes`, `gabarito_ok`. Esses campos são a sua **única** fonte de verdade e de parâmetros de tolerância/unidade — você não relê a face secreta.
+
+> **Anti-alucinação do orquestrador (CRÍTICO).** Você **NUNCA** reescreve, "corrige", otimiza ou regenera a `gabarito_sql` (você nem a montou — veio do `golden-runner`). `valor_gabarito` vem **exclusivamente** do retorno do `golden-runner`; sem execução real → `gabarito_ok = false`/`null`. Se um `golden-runner` falhar, **não conserte a query nesta run**: a pergunta vira `status = "erro_gabarito"` na conferência — não é culpa do candidato.
+
+## Passo 6 — Conferência (scoring canônico)
+
+> Este é o **scoring canônico do projeto**. O `/create-kb` (Passo de avaliação champion-vs-candidate) aplica **exatamente estas mesmas regras** — referencie este passo, não duplique a lógica.
+
+A conferência recebe, por pergunta, apenas: **a resposta do avaliador** (Passo 4) + **o resultado do `golden-runner`** (Passo 5). Não há nenhum outro caminho de informação. Para cada pergunta:
+
+### 6.0 `valor_referencia` (precede tudo)
+
+Define a verdade contra a qual o candidato será comparado:
+
+- **`esperava_encontrar == true` e `gabarito_ok == false`** (do `golden-runner`): a verdade não pôde ser estabelecida nesta run → `status = "erro_gabarito"`. **Pule 6.1–6.5.** Registre `valor_referencia = null`, `delta_absoluto = null`, `delta_relativo = null`, `dentro_tolerancia = false`. Não é culpa do candidato — é o benchmark que quebrou.
+- **`esperava_encontrar == true` e `gabarito_ok == true`**: `valor_referencia = valor_gabarito`. Siga para 6.1.
+- **`esperava_encontrar == false`** (`gabarito_ok == null`): sem verdade numérica; `valor_referencia = null` (a avaliação é só sobre `encontrada`, ver 6.1).
+
+### 6.1 `encontrada_ok`
 - `encontrada_ok = (encontrada_obtida == esperava_encontrar)`
 - Se `esperava_encontrar == false`:
   - Subagente retornou `encontrada: false` → passou; `dentro_tolerancia: true`, `delta_absoluto: null`, `delta_relativo: null`.
   - Subagente retornou `encontrada: true` → **reprovado** (alucinou).
 
-### 5.2 `unidade_ok`
-- Match case-insensitive. Tolere `"count"` ≡ `""` ≡ `"#"`. Moedas estrito (`"USD"` ≠ `"BRL"`).
+### 6.2 `unidade_ok`
+- Compare `unidade_obtida` (avaliador) com `resposta_esperada_unidade` (do `golden-runner`). Match case-insensitive. Tolere `"count"` ≡ `""` ≡ `"#"`. Moedas estrito (`"USD"` ≠ `"BRL"`).
 
-### 5.3 Comparação numérica
-Quando `esperava_encontrar == true`, `encontrada_obtida == true` e o `status` **não** foi fixado em `"erro_gabarito"` (5.0):
+### 6.3 Comparação numérica
+Quando `esperava_encontrar == true`, `encontrada_obtida == true` e o `status` **não** foi fixado em `"erro_gabarito"` (6.0):
 - `delta_absoluto = abs(valor_obtido - valor_referencia)`
 - Se `valor_referencia != 0`: `delta_relativo = delta_absoluto / abs(valor_referencia)`
 - Senão: `delta_relativo = (valor_obtido == 0) ? 0.0 : 1.0`
-- `dentro_tolerancia = delta_relativo <= tolerancia_relativa`
+- `dentro_tolerancia = delta_relativo <= tolerancia_relativa` (a `tolerancia_relativa` veio do `golden-runner`).
 
-### 5.4 `execucao_ok`
+### 6.4 `execucao_ok`
 Aplique quando `encontrada_obtida == true`. `execucao_ok = true` se **todos**:
 1. `sql_executado` é string não-vazia contendo `SELECT` (case-insensitive).
 2. `bytes_processed` é integer `>= 0`.
@@ -147,8 +150,8 @@ Aplique quando `encontrada_obtida == true`. `execucao_ok = true` se **todos**:
 
 Quando `encontrada_obtida == false`, `execucao_ok = null`.
 
-### 5.5 `status`
-- Se o `status` já foi fixado em `"erro_gabarito"` no 5.0, **mantenha** (tem precedência — a run não conseguiu estabelecer a verdade).
+### 6.5 `status`
+- Se o `status` já foi fixado em `"erro_gabarito"` no 6.0, **mantenha** (tem precedência — a run não conseguiu estabelecer a verdade).
 - Senão, `status = "aprovado"` se **todas**:
   1. `encontrada_ok == true`
   2. `unidade_ok == true` (ou `esperava_encontrar == false`)
@@ -159,41 +162,50 @@ Quando `encontrada_obtida == false`, `execucao_ok = null`.
 
 Os três status são mutuamente exclusivos: `aprovado` (candidato bateu a verdade), `reprovado` (candidato errou), `erro_gabarito` (benchmark não rodou — candidato não foi julgado).
 
-## Passo 6 — Gravar resultado (snapshot com `meta` + índice)
+## Passo 7 — Gravar resultado (snapshot com `meta` + índice)
 
-O snapshot deixa de ser um array nu e passa a ser um objeto `{ meta, results }`. O array por-pergunta (`results`) é **idêntico ao formato atual** — nada muda dentro de cada objeto. O bloco `meta` carimba identidade e agregados da run; ele alimenta o `_index.json` (Passo 6.5), o alerta de regressão e o `/eval-report`.
+O snapshot é um objeto `{ meta, results }`. O array por-pergunta (`results`) traz um objeto por pergunta (schema no 7.3). O bloco `meta` carimba identidade e agregados da run; ele alimenta o `_index.json` (7.4), o alerta de regressão e o `/eval-report`.
 
-### 6.1 Diretório e timestamp
+### 7.1 Diretório e timestamp
 
 1. `mkdir -p <RESULTS_DIR>` via Bash se necessário.
 2. `RUN_ID = $(date +%Y-%m-%dT%H-%M-%S)` via Bash. O arquivo será `<RESULTS_DIR>/<RUN_ID>.json`.
 
-### 6.2 Hashes de identidade (16 chars; nunca abortam)
+### 7.2 Hashes de identidade + integridade da KB enviada (16 chars; nunca abortam)
 
-São identidade, não segurança — colisão é irrelevante. Compute o sha256 (primeiros 16 chars) de `kb.md` e `questions.json`:
+São identidade, não segurança — colisão é irrelevante. Compute o sha256 (primeiros 16 chars):
 
 ```bash
-sha256sum "<KB_PATH>" 2>/dev/null | head -c 16          # → kb_hash
-sha256sum "<QUESTIONS_PATH>" 2>/dev/null | head -c 16    # → questions_hash
+sha256sum "<KB_PATH>" 2>/dev/null | head -c 16          # → kb_hash (kb.md em disco)
+sha256sum "<SECRET_PATH>" 2>/dev/null | head -c 16       # → questions_hash (face secreta = identidade do benchmark)
 ```
 
-Se `sha256sum` não existir, use o fallback PowerShell (resultado idêntico):
-```
-(Get-FileHash "<KB_PATH>" -Algorithm SHA256).Hash.Substring(0,16).ToLower()
-```
-Se **ambos** falharem, grave `"unknown"` no campo e siga. **Nunca aborte a run por causa do hash.**
+Se `sha256sum` não existir, use o fallback PowerShell (resultado idêntico): `(Get-FileHash "<path>" -Algorithm SHA256).Hash.Substring(0,16).ToLower()`. Se **ambos** falharem, grave `"unknown"` e siga. **Nunca aborte a run por causa do hash.**
 
-### 6.3 Agregados
+> `questions_hash` agora é o hash da **face secreta** (`questions.secret.json`) — é ela que define a identidade do benchmark (gabaritos + tolerâncias). A face pública por si só não distingue duas versões de gabarito.
 
-A partir do array `results` já avaliado (Passo 5):
-- `aprovados` = nº de perguntas com `status == "aprovado"`.
+**Verificação de KB íntegra (Correção 4 — `kb_prompt_hash` / `kb_integra`).** Detecta se o avaliador recebeu o `kb.md` inteiro ou um recorte/versão truncada:
+
+1. Escreva o `KB_CONTENT` que você de fato enviou aos avaliadores (Passo 2.1c) num arquivo de scratch e hasheie-o:
+   ```bash
+   # KB_CONTENT já está no seu contexto; grave-o EXATAMENTE como foi enviado
+   sha256sum "<scratch>/kb_sent.md" 2>/dev/null | head -c 16   # → kb_prompt_hash
+   ```
+   (Use o diretório de scratch da sessão; não escreva dentro de `knowledge-bases/`.)
+2. `kb_integra = (kb_prompt_hash == kb_hash)`. Se igual → o conteúdo enviado é byte-a-byte o `kb.md` em disco (íntegro). Se **diferente** → marque a run como **suspeita** (a KB pode ter sido truncada/recortada no caminho); ainda assim **grave o snapshot normalmente** e reporte no Passo 9.
+3. Se `kb_prompt_hash` não puder ser computado, grave `"unknown"` e `kb_integra = null` — **nunca aborte** por isso.
+
+### 7.3 Agregados
+
+A partir do array `results` já avaliado (Passo 6):
+- `aprovados` = nº com `status == "aprovado"`.
 - `reprovados` = nº com `status == "reprovado"`.
 - `erros_gabarito` = nº com `status == "erro_gabarito"`. (Benchmark não executou — **não** é reprovação do candidato. `aprovados + reprovados + erros_gabarito == total`.)
 - `total` = tamanho de `results`.
-- `confianca_media` = média de `confianca_score` sobre perguntas com `parse_error == false`, arredondada a 2 casas decimais. Se nenhuma elegível, `0.0`.
-- `bytes_total` = soma de `bytes_processed` (candidato) **+** `gabarito_bytes` (gabarito) de todas as perguntas, tratando `null` como `0`. (Custo BigQuery total da run = candidato + gabarito, agora que cada pergunta roda SQL duas vezes.)
+- `confianca_media` = média de `confianca_score` sobre perguntas com `parse_error == false`, arredondada a 2 casas. Se nenhuma elegível, `0.0`.
+- `bytes_total` = soma de `bytes_processed` (candidato) **+** `gabarito_bytes` (gabarito) de todas as perguntas, tratando `null` como `0`.
 
-### 6.4 Gravar `{ meta, results }`
+### 7.4 Gravar `{ meta, results }`
 
 Defina `meta.mode = "quick"` se `QUICK_MODE`, senão `"full"`. Write em `<RESULTS_DIR>/<RUN_ID>.json` (pretty-print, indent=2):
 
@@ -203,6 +215,8 @@ Defina `meta.mode = "quick"` se `QUICK_MODE`, senão `"full"`. Write em `<RESULT
     "kb": "<kb>",
     "run_id": "<RUN_ID>",
     "kb_hash": "<kb_hash ou unknown>",
+    "kb_prompt_hash": "<kb_prompt_hash ou unknown>",
+    "kb_integra": true,
     "questions_hash": "<questions_hash ou unknown>",
     "mode": "full",
     "aprovados": 5,
@@ -212,11 +226,11 @@ Defina `meta.mode = "quick"` se `QUICK_MODE`, senão `"full"`. Write em `<RESULT
     "confianca_media": 0.88,
     "bytes_total": 1264080
   },
-  "results": [ /* array do Passo 5 — um objeto por pergunta, schema abaixo */ ]
+  "results": [ /* array do Passo 6 — um objeto por pergunta, schema abaixo */ ]
 }
 ```
 
-Cada elemento de `results` segue este schema. Em relação ao schema antigo: **sai** `resposta_esperada_valor`; **entram** os campos de gabarito (`gabarito_sql`, `valor_gabarito`, `gabarito_job_id`, `gabarito_bytes`, `gabarito_ok`). O `valor_gabarito` é a verdade-corrente desta run (auditável depois via `gabarito_job_id`):
+Cada elemento de `results` segue este schema. O `valor_gabarito` e a `gabarito_sql` vêm do `golden-runner` (auditável depois via `gabarito_job_id`) e são gravados para auditoria — eles entram no seu contexto **só após** os avaliadores terem respondido:
 
 ```json
 {
@@ -250,13 +264,13 @@ Cada elemento de `results` segue este schema. Em relação ao schema antigo: **s
 }
 ```
 
-> Em `status == "erro_gabarito"`: `gabarito_ok = false`, `valor_gabarito = null`, e os campos do candidato (`valor_obtido`, `sql_executado`, etc.) ainda são preenchidos com o que ele retornou — mas `delta_*` ficam `null` e `dentro_tolerancia = false`. Em formato legado, mantenha `resposta_esperada_valor` no objeto e omita os campos de gabarito.
+> A `pergunta` no `results` vem da face pública. Os campos de gabarito vêm do `golden-runner`. Em `status == "erro_gabarito"`: `gabarito_ok = false`, `valor_gabarito = null`, e os campos do candidato ainda são preenchidos com o que ele retornou — mas `delta_*` ficam `null` e `dentro_tolerancia = false`.
 
 > `mode` é `"quick"` quando rodado com `--quick`; senão `"full"`. (Os modos `"champion"`/`"candidate"` pertencem ao `/create-kb` e viram `"full"` na promoção.)
 
-### 6.5 Appendar ao índice (`_index.json` — append-only, tolerante a falha)
+### 7.5 Appendar ao índice (`_index.json` — append-only, tolerante a falha)
 
-O índice `<RESULTS_DIR>/_index.json` é um array onde cada run appenda uma entrada **igual ao bloco `meta`** do Passo 6.4. É a fonte rápida do `/eval-report` e do alerta de regressão — **derivado, não fonte de verdade** (reconstruível varrendo os `meta` dos snapshots).
+O índice `<RESULTS_DIR>/_index.json` é um array onde cada run appenda uma entrada **igual ao bloco `meta`** do 7.4. É a fonte rápida do `/eval-report` e do alerta de regressão — **derivado, não fonte de verdade** (reconstruível varrendo os `meta` dos snapshots).
 
 1. Se `_index.json` **não** existe (`test -e`): crie com `[<meta>]`.
 2. Se existe: Read → parse do array → **append** de `<meta>` ao fim → Write (indent=2). **Nunca** reescreva, reordene ou edite entradas anteriores.
@@ -265,26 +279,26 @@ O índice `<RESULTS_DIR>/_index.json` é um array onde cada run appenda uma entr
    ⚠ aviso: _index.json não atualizado (<motivo curto>). Snapshot gravado normalmente; índice é reconstruível via /eval-report.
    ```
 
-## Passo 7 — Comparação longitudinal (custo zero)
+## Passo 8 — Comparação longitudinal (custo zero)
 
-Apenas cruza dados já presentes nos snapshots/índice — **nenhuma chamada nova ao BigQuery**. Se nada aplicar, siga ao Passo 8.
+Apenas cruza dados já presentes nos snapshots/índice — **nenhuma chamada nova ao BigQuery**. Se nada aplicar, siga ao Passo 9.
 
-### 7.1 Localizar baseline
+### 8.1 Localizar baseline
 
-Leia `<RESULTS_DIR>/_index.json` (já contém a entrada da run atual, appendada no Passo 6.5). O índice da KB só tem entradas canônicas (`mode` ∈ {`full`,`quick`}; champion/candidate nunca entram).
+Leia `<RESULTS_DIR>/_index.json` (já contém a entrada da run atual, appendada no 7.5). O índice da KB só tem entradas canônicas (`mode` ∈ {`full`,`quick`}; champion/candidate nunca entram).
 
-- **Modo normal (`full`):** `BASELINE` = entrada **imediatamente anterior** à run atual (penúltima). Sem anterior (1ª run da KB) → pule o Passo 7 e vá ao resumo.
-- **Modo `--quick`:** `BASELINE` = entrada mais recente com `reprovados == 0`, excluindo a atual (decisão B). Se nenhuma run 100% verde existir → use a anterior mais recente e marque `BASELINE_FALLBACK = true`. Sem nenhuma anterior → sem baseline (saída quick reporta só o estado atual).
+- **Modo normal (`full`):** `BASELINE` = entrada **imediatamente anterior** à run atual (penúltima). Sem anterior (1ª run da KB) → pule o Passo 8 e vá ao resumo.
+- **Modo `--quick`:** `BASELINE` = entrada mais recente com `reprovados == 0`, excluindo a atual. Se nenhuma run 100% verde existir → use a anterior mais recente e marque `BASELINE_FALLBACK = true`. Sem nenhuma anterior → sem baseline (saída quick reporta só o estado atual).
 
 Índice ausente/corrompido → **não aborte**: trate como "sem baseline" e siga (o snapshot já foi gravado).
 
-### 7.2 Checar alvo móvel
+### 8.2 Checar alvo móvel
 
 Compare `questions_hash` da run atual com o do `BASELINE`:
-- **Diferentes, OU qualquer um == `"unknown"`** → as perguntas mudaram (ou não dá para provar que são as mesmas); comparar por `id` perde validade. Marque `ALVO_MOVEL = true`, **não** reporte regressão, pule 7.3. (Dois `"unknown"` **não** contam como "iguais" — hash ausente nunca autoriza comparação, mesmo critério do `/eval-report`.)
-- **Iguais e != `"unknown"`** → siga para 7.3.
+- **Diferentes, OU qualquer um == `"unknown"`** → as perguntas mudaram (ou não dá para provar que são as mesmas); comparar por `id` perde validade. Marque `ALVO_MOVEL = true`, **não** reporte regressão, pule 8.3. (Dois `"unknown"` **não** contam como "iguais".)
+- **Iguais e != `"unknown"`** → siga para 8.3.
 
-### 7.3 Transições por pergunta
+### 8.3 Transições por pergunta
 
 Carregue o snapshot do baseline (`<RESULTS_DIR>/<BASELINE.run_id>.json`) e leia seu `results`. **Tolere o formato antigo**: se o topo for array nu (sem `meta`), use o próprio array como `results`.
 
@@ -292,13 +306,13 @@ Para cada `id` presente nos dois, compare `status`:
 - `aprovado → reprovado` = **regressão** → adicione a `REGRESSOES`.
 - `reprovado → aprovado` = **melhoria** → adicione a `MELHORIAS`.
 - igual = estável.
-- Qualquer transição **de ou para `erro_gabarito`** = **não comparável** (o benchmark quebrou de um lado) → **não** conta como regressão nem melhoria. Os itens em `erro_gabarito` na run atual são reportados à parte (Passo 8), não como regressão.
+- Qualquer transição **de ou para `erro_gabarito`** = **não comparável** → **não** conta como regressão nem melhoria. Os itens em `erro_gabarito` na run atual são reportados à parte (Passo 9).
 
-Para cada item, derive o `motivo curto` da run atual (mesma prioridade do Passo 8).
+Para cada item, derive o `motivo curto` da run atual (mesma prioridade do Passo 9).
 
-## Passo 8 — Saída no terminal
+## Passo 9 — Saída no terminal
 
-### 8a. Modo `--quick` — saída binária
+### 9a. Modo `--quick` — saída binária
 
 Data de hoje via `date +%Y-%m-%d`. Imprima:
 
@@ -308,22 +322,33 @@ Data de hoje via `date +%Y-%m-%d`. Imprima:
   agora:    <aprovados>/<total>
   [para cada item em REGRESSOES: "⚠ #<id> regrediu: <motivo curto>"]
   [se erros_gabarito > 0: "✖ <erros_gabarito> gabarito(s) não executaram (benchmark) — #<ids>"]
+  [se kb_integra == false: "⚠ KB suspeita: conteúdo enviado ≠ kb.md em disco (kb_prompt_hash != kb_hash)"]
 
   KB ainda condiz? <SIM|NÃO> — <justificativa>
 ```
 
 Regras:
-- `SIM` se `REGRESSOES` vazio **e** `erros_gabarito == 0` **e** `aprovados == total`; senão `NÃO`.
-- Justificativa: `SIM` → `<total>/<total> dentro da tolerância.` · `NÃO` com regressões → `<len(REGRESSOES)> pergunta(s) fora de tolerância.` · `NÃO` com `erros_gabarito > 0` → `<erros_gabarito> gabarito(s) não executaram — verifique o questions.json / conexão BigQuery.` · `NÃO` sem regressão vs baseline → `<reprovados> reprovada(s).`.
+- `SIM` se `REGRESSOES` vazio **e** `erros_gabarito == 0` **e** `aprovados == total` **e** `kb_integra != false`; senão `NÃO`.
+- Justificativa: `SIM` → `<total>/<total> dentro da tolerância.` · `NÃO` com regressões → `<len(REGRESSOES)> pergunta(s) fora de tolerância.` · `NÃO` com `erros_gabarito > 0` → `<erros_gabarito> gabarito(s) não executaram — verifique o questions.secret.json / conexão BigQuery.` · `NÃO` com `kb_integra == false` → `KB enviada ao avaliador diverge do kb.md em disco — resultado não confiável.` · `NÃO` sem regressão vs baseline → `<reprovados> reprovada(s).`.
 - `BASELINE_FALLBACK == true` → acrescente `  (sem run 100% verde anterior — baseline = run mais recente)`.
-- `ALVO_MOVEL == true` → troque as linhas baseline/regressão por `  ⚠ questions.json mudou desde a última run — comparação não aplicável.`; reporte só `agora:` e decida `SIM/NÃO` pelo estado atual (`aprovados == total`).
+- `ALVO_MOVEL == true` → troque as linhas baseline/regressão por `  ⚠ benchmark mudou desde a última run — comparação não aplicável.`; reporte só `agora:` e decida `SIM/NÃO` pelo estado atual.
 - Sem baseline (1ª run) → `  baseline: — (primeira run)`; decida pelo estado atual.
 
-No modo quick, **encerre aqui** (não imprima 8b).
+No modo quick, **encerre aqui** (não imprima 9b).
 
-### 8b. Modo normal (`full`)
+### 9b. Modo normal (`full`)
 
-Se `REGRESSOES` não vazio e `ALVO_MOVEL != true`, imprima o alerta **antes** do resumo:
+Se `kb_integra == false`, imprima **antes de tudo** o alerta de integridade:
+```
+⚠ KB SUSPEITA: o conteúdo enviado aos avaliadores não bate com kb.md em disco.
+  kb_hash (disco):     <kb_hash>
+  kb_prompt_hash (env): <kb_prompt_hash>
+  Provável causa: KB truncada/recortada na leitura (Passo 2) ou editada durante a run.
+  Trate os resultados desta run com desconfiança e rode novamente.
+────────────────────────────────────────
+```
+
+Se `REGRESSOES` não vazio e `ALVO_MOVEL != true`, imprima o alerta de regressão **antes** do resumo:
 
 ```
 ⚠ REGRESSÃO vs run anterior (<BASELINE.run_id>)
@@ -337,7 +362,7 @@ Se `REGRESSOES` não vazio e `ALVO_MOVEL != true`, imprima o alerta **antes** do
 
 Se `ALVO_MOVEL == true`, em vez do bloco acima:
 ```
-ℹ alvo móvel: questions.json mudou desde a run anterior — regressão não comparável.
+ℹ alvo móvel: benchmark (questions.secret.json) mudou desde a run anterior — regressão não comparável.
 ```
 Primeira run (sem baseline): nada antes do resumo.
 
@@ -346,6 +371,7 @@ Em seguida, o resumo padrão:
 ```
 KB avaliada:  <kb>
 Snapshot:     <RESULTS_DIR>/<RUN_ID>.json
+Integridade KB: <OK | SUSPEITA (kb_prompt_hash != kb_hash)>
 Aprovados:    X/N
 Reprovados:   Y/N
 Erros de gabarito: G/N   [omita a linha se G == 0]
@@ -356,13 +382,13 @@ Reprovados:
   ...
 
 [se G > 0:]
-Erros de gabarito (benchmark não executou — NÃO é falha do candidato; corrija a gabarito_sql ou a conexão BigQuery):
+Erros de gabarito (benchmark não executou — NÃO é falha do candidato; corrija a gabarito_sql na face secreta ou a conexão BigQuery):
   #<id> — gabarito_falhou
   ...
 ```
 
 Motivo curto (em ordem de prioridade):
-- `gabarito_falhou` se `status == "erro_gabarito"` (a `gabarito_sql` não executou — listado no bloco próprio acima, não em Reprovados).
+- `gabarito_falhou` se `status == "erro_gabarito"` (a `gabarito_sql` não executou — listado no bloco próprio acima).
 - `parse_error` se JSON malformado.
 - `encontrada esperada=X, obtida=Y` se discrepância de encontrada.
 - `unidade esperada=X, obtida=Y` se discrepância de unidade.
@@ -371,15 +397,17 @@ Motivo curto (em ordem de prioridade):
 
 ## Regras invioláveis
 
-- **Não constrói nada**: se kb.md ou questions.json estão ausentes, este command aponta para `/create-kb` e termina. Não tenta sync, não invoca kb-builder, não invoca question-creator.
-- **kb-evaluator é sempre paralelo**: N tool_uses em uma única mensagem.
-- **Gabarito é executado verbatim pelo orquestrador**: a `gabarito_sql` roda como está, via `mcp__bq_local__execute_sql_readonly`, nunca regenerada/corrigida na run, nunca incluída no prompt do `kb-evaluator`. Falha vira `erro_gabarito` (não reprovação). É o que mantém a verdade determinística e não-alucinada, e o candidato medido só pela KB.
-- **Verdade é dinâmica**: a referência de comparação é `valor_gabarito` (resultado da run atual), não um número fixo. Dois runs com o mesmo `questions_hash` podem ter `valor_gabarito` diferente (drift de dados) — e isso é correto: candidato e gabarito rodam ao vivo, então o `status` por pergunta permanece estável apesar do drift.
+- **Você lê SÓ a face pública**: o orquestrador nunca abre `questions.secret.json`. A `gabarito_sql` e o `valor_gabarito` chegam exclusivamente como **retorno do `golden-runner`**, e só depois que os avaliadores já responderam. Ler a face secreta no orquestrador recria o vazamento que a separação física existe para impedir.
+- **Ordem é isolamento**: avaliadores (Passo 3) **antes** dos `golden-runner` (Passo 5). Em nenhum momento da montagem do prompt do avaliador o seu contexto contém o gabarito.
+- **Não constrói nada**: se kb.md ou as faces estão ausentes, este command aponta para `/create-kb` e termina.
+- **kb-evaluator e golden-runner são sempre paralelos**: N tool_uses em uma única mensagem, cada grupo no seu turno.
+- **Gabarito é executado verbatim pelo `golden-runner`**: a `gabarito_sql` roda como está, nunca regenerada/corrigida na run, nunca incluída no prompt do `kb-evaluator`. Falha vira `erro_gabarito` (não reprovação). Determinismo é garantido por validação de prova (`gabarito_job_id`/`gabarito_bytes`), não por "quem executou".
+- **Verdade é dinâmica**: a referência de comparação é `valor_gabarito` (resultado da run atual), não um número fixo. Dois runs com o mesmo `questions_hash` podem ter `valor_gabarito` diferente (drift de dados) — e isso é correto: o `status` por pergunta permanece estável apesar do drift.
+- **Conferência é o scoring canônico**: o `/create-kb` referencia o Passo 6, não reimplementa.
 - **Nunca ajuste manualmente as respostas dos subagentes**: registre o que retornaram.
-- **Idempotente**: rodar 2× produz 2 snapshots distintos em `results/` (e 2 entradas no `_index.json`, append-only) sem alterar `kb.md` ou `questions.json`.
-- **Sem AskUserQuestion**: este command roda sem interação. Se algum input fosse necessário, ele veio do `/create-kb` antes.
-- **Snapshot é `{ meta, results }`**: nunca volte ao array nu; o array por-pergunta vai dentro de `results`, byte a byte inalterado. Snapshots antigos (array nu, sem `meta`) são tolerados na leitura e **nunca** reescritos.
-- **Índice é append-only e não-crítico**: `_index.json` nunca reescreve entradas anteriores; falha ao gravá-lo emite aviso mas **não** aborta a run.
-- **Hash nunca aborta**: se o sha256 de `kb.md`/`questions.json` falhar, grave `"unknown"` e siga.
-- **`--quick` é só apresentação**: usa a MESMA avaliação (N kb-evaluator paralelos no BigQuery) e grava+indexa snapshot normalmente (`mode:"quick"`). Muda apenas o baseline (última run verde, decisão B) e o formato de saída (binário). Sem `--quick`: comportamento idêntico ao anterior + os carimbos novos.
-- **Comparação longitudinal é custo zero**: regressão/baseline cruzam só snapshots/índice — nunca disparam BigQuery extra. Ausência de baseline/índice degrada para "sem comparação", nunca aborta.
+- **Idempotente**: rodar 2× produz 2 snapshots distintos (e 2 entradas no `_index.json`, append-only) sem alterar `kb.md` nem as faces.
+- **Sem AskUserQuestion**: este command roda sem interação.
+- **Snapshot é `{ meta, results }`**: o array por-pergunta vai dentro de `results`. Snapshots antigos (array nu, sem `meta`) são tolerados na leitura e **nunca** reescritos.
+- **Índice e hashes nunca abortam**: `_index.json` é append-only e não-crítico; sha256 que falhar grava `"unknown"`. `kb_integra == false` **sinaliza** (run suspeita) mas **não** aborta.
+- **`--quick` é só apresentação**: usa a MESMA avaliação e grava+indexa snapshot normalmente (`mode:"quick"`). Muda apenas o baseline (última run verde) e o formato de saída.
+- **Comparação longitudinal é custo zero**: regressão/baseline cruzam só snapshots/índice — nunca disparam BigQuery extra.
