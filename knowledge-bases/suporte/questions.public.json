@@ -1,0 +1,142 @@
+[
+  {
+    "id": 1,
+    "pergunta": "Qual foi a demanda recebida (total de contatos demandados) no período de 08 a 12 de junho de 2026, nas áreas BK, DN, EC, SAC - CA e SAC - Pessoalize, nos canais Chat, Email, Telefone, Web e Whatsapp?"
+  },
+  {
+    "id": 2,
+    "pergunta": "Qual foi a demanda atendida total no período de 08 a 12 de junho de 2026, nas áreas BK, DN, EC, SAC - CA e SAC - Pessoalize, nos canais Chat, Email, Telefone, Web e Whatsapp?"
+  },
+  {
+    "id": 3,
+    "pergunta": "Qual foi o total de abandonos no período de 08 a 12 de junho de 2026, nas áreas BK, DN, EC, SAC - CA e SAC - Pessoalize, nos canais Chat, Email, Telefone, Web e Whatsapp?"
+  },
+  {
+    "id": 4,
+    "pergunta": "Qual foi o percentual de abandono geral (abandonos ÷ demanda recebida) no período de 08 a 12 de junho de 2026, nas áreas BK, DN, EC, SAC - CA e SAC - Pessoalize, nos canais Chat, Email, Telefone, Web e Whatsapp? Responda como decimal entre 0 e 1."
+  },
+  {
+    "id": 5,
+    "pergunta": "Qual foi o tempo médio de espera (TME) geral, expresso em dias, no período de 08 a 12 de junho de 2026, nas áreas BK, DN, EC, SAC - CA e SAC - Pessoalize, considerando apenas os canais Whatsapp, Telefone e Chat?"
+  },
+  {
+    "id": 6,
+    "pergunta": "Qual foi o tempo médio de atendimento (TMA) geral, expresso em dias, no período de 08 a 12 de junho de 2026, nas áreas BK, DN, EC, SAC - CA e SAC - Pessoalize, considerando apenas os canais Whatsapp, Telefone e Chat?"
+  },
+  {
+    "id": 7,
+    "pergunta": "Qual foi o CSAT geral (avaliações positivas ÷ total de avaliações) no período de 08 a 12 de junho de 2026, nas áreas BK, DN, EC, SAC - CA e SAC - Pessoalize, nos canais Chat, Email, Telefone, Web e Whatsapp? Responda como decimal entre 0 e 1."
+  },
+  {
+    "id": 8,
+    "pergunta": "Qual foi o percentual de avaliação (total de avaliações ÷ demanda atendida) no período de 08 a 12 de junho de 2026, nas áreas BK, DN, EC, SAC - CA e SAC - Pessoalize, nos canais Chat, Email, Telefone, Web e Whatsapp? Responda como decimal entre 0 e 1."
+  },
+  {
+    "id": 9,
+    "pergunta": "Quantas avaliações positivas houve no período de 08 a 12 de junho de 2026, nas áreas BK, DN, EC, SAC - CA e SAC - Pessoalize, nos canais Chat, Email, Telefone, Web e Whatsapp?"
+  },
+  {
+    "id": 10,
+    "pergunta": "Quantas avaliações negativas houve no período de 08 a 12 de junho de 2026, nas áreas BK, DN, EC, SAC - CA e SAC - Pessoalize, nos canais Chat, Email, Telefone, Web e Whatsapp?"
+  },
+  {
+    "id": 11,
+    "pergunta": "Qual foi a demanda recebida (total de contatos demandados) no período de 08 a 12 de junho de 2026, na área RT (Retenção), nos canais Chat, Email, Telefone, Web e Whatsapp?"
+  },
+  {
+    "id": 12,
+    "pergunta": "Qual foi a demanda atendida total no período de 08 a 12 de junho de 2026, na área RT (Retenção), nos canais Chat, Email, Telefone, Web e Whatsapp?"
+  },
+  {
+    "id": 13,
+    "pergunta": "Qual foi o total de abandonos no período de 08 a 12 de junho de 2026, na área RT (Retenção), nos canais Chat, Email, Telefone, Web e Whatsapp?"
+  },
+  {
+    "id": 14,
+    "pergunta": "Qual foi o percentual de abandono geral (abandonos ÷ demanda recebida) no período de 08 a 12 de junho de 2026, na área RT (Retenção), nos canais Chat, Email, Telefone, Web e Whatsapp? Responda como decimal entre 0 e 1."
+  },
+  {
+    "id": 15,
+    "pergunta": "Qual foi o tempo médio de espera (TME) geral, expresso em dias, no período de 08 a 12 de junho de 2026, na área RT (Retenção), considerando apenas os canais Whatsapp, Telefone e Chat?"
+  },
+  {
+    "id": 16,
+    "pergunta": "Qual foi o tempo médio de atendimento (TMA) geral, expresso em dias, no período de 08 a 12 de junho de 2026, na área RT (Retenção), considerando apenas os canais Whatsapp, Telefone e Chat?"
+  },
+  {
+    "id": 17,
+    "pergunta": "Qual foi o CSAT geral (avaliações positivas ÷ total de avaliações) no período de 08 a 12 de junho de 2026, na área RT (Retenção), nos canais Chat, Email, Telefone, Web e Whatsapp? Responda como decimal entre 0 e 1."
+  },
+  {
+    "id": 18,
+    "pergunta": "Qual foi o percentual de avaliação (total de avaliações ÷ demanda atendida) no período de 08 a 12 de junho de 2026, na área RT (Retenção), nos canais Chat, Email, Telefone, Web e Whatsapp? Responda como decimal entre 0 e 1."
+  },
+  {
+    "id": 19,
+    "pergunta": "Quantas avaliações positivas houve no período de 08 a 12 de junho de 2026, na área RT (Retenção), nos canais Chat, Email, Telefone, Web e Whatsapp?"
+  },
+  {
+    "id": 20,
+    "pergunta": "Quantas avaliações negativas houve no período de 08 a 12 de junho de 2026, na área RT (Retenção), nos canais Chat, Email, Telefone, Web e Whatsapp?"
+  },
+  {
+    "id": 21,
+    "pergunta": "Qual foi a demanda recebida pelo chatbot (total de interações) no período de 08 a 12 de junho de 2026, no departamento Servir, nos canais Chat, Web e Whatsapp?"
+  },
+  {
+    "id": 22,
+    "pergunta": "Qual foi o total de transbordos do chatbot no período de 08 a 12 de junho de 2026, no departamento Servir, nos canais Chat, Web e Whatsapp?"
+  },
+  {
+    "id": 23,
+    "pergunta": "Qual foi o percentual de demandas avaliadas (total de avaliações ÷ total de interações) do chatbot no período de 08 a 12 de junho de 2026, no departamento Servir, nos canais Chat, Web e Whatsapp? Responda como decimal entre 0 e 1."
+  },
+  {
+    "id": 24,
+    "pergunta": "Qual foi o CSAT do chatbot (avaliações positivas ÷ total de avaliações) no período de 08 a 12 de junho de 2026, no departamento Servir, nos canais Chat, Web e Whatsapp? Responda como decimal entre 0 e 1."
+  },
+  {
+    "id": 25,
+    "pergunta": "Quantas avaliações positivas o chatbot recebeu no período de 08 a 12 de junho de 2026, no departamento Servir, nos canais Chat, Web e Whatsapp?"
+  },
+  {
+    "id": 26,
+    "pergunta": "Quantas avaliações negativas o chatbot recebeu no período de 08 a 12 de junho de 2026, no departamento Servir, nos canais Chat, Web e Whatsapp?"
+  },
+  {
+    "id": 27,
+    "pergunta": "Qual foi a taxa de retenção do chatbot (1 menos a razão entre transbordos e interações) no período de 08 a 12 de junho de 2026, no departamento Servir, nos canais Chat, Web e Whatsapp? Responda como decimal entre 0 e 1."
+  },
+  {
+    "id": 28,
+    "pergunta": "Quantos contatos únicos (clientes distintos) o chatbot atendeu no período de 08 a 12 de junho de 2026, no departamento Servir, nos canais Chat, Web e Whatsapp?"
+  },
+  {
+    "id": 29,
+    "pergunta": "Qual foi a demanda recebida pelo chatbot (total de interações) no período de 08 a 12 de junho de 2026, no departamento Retenção, nos canais Chat, Web e Whatsapp?"
+  },
+  {
+    "id": 30,
+    "pergunta": "Qual foi o total de transbordos do chatbot no período de 08 a 12 de junho de 2026, no departamento Retenção, nos canais Chat, Web e Whatsapp?"
+  },
+  {
+    "id": 31,
+    "pergunta": "Qual foi o percentual de demandas avaliadas (total de avaliações ÷ total de interações) do chatbot no período de 08 a 12 de junho de 2026, no departamento Retenção, nos canais Chat, Web e Whatsapp? Responda como decimal entre 0 e 1."
+  },
+  {
+    "id": 32,
+    "pergunta": "Qual foi o CSAT do chatbot (avaliações positivas ÷ total de avaliações) no período de 08 a 12 de junho de 2026, no departamento Retenção, nos canais Chat, Web e Whatsapp? Responda como decimal entre 0 e 1."
+  },
+  {
+    "id": 33,
+    "pergunta": "Quantas avaliações positivas o chatbot recebeu no período de 08 a 12 de junho de 2026, no departamento Retenção, nos canais Chat, Web e Whatsapp?"
+  },
+  {
+    "id": 34,
+    "pergunta": "Quantas avaliações negativas o chatbot recebeu no período de 08 a 12 de junho de 2026, no departamento Retenção, nos canais Chat, Web e Whatsapp?"
+  },
+  {
+    "id": 35,
+    "pergunta": "Qual foi a taxa de retenção do chatbot (1 menos a razão entre transbordos e interações) no período de 08 a 12 de junho de 2026, no departamento Retenção, nos canais Chat, Web e Whatsapp? Responda como decimal entre 0 e 1."
+  }
+]
