@@ -233,6 +233,8 @@ Fim do command. Não roda eval automaticamente.
    c. Concatene **todas** as janelas (conteúdo limpo), na ordem, em `KB_CONTENT_CHAMPION`.
 3. Leia `<CANDIDATE_PATH>` (candidate) da mesma forma — meça `TOTAL_CANDIDATE` e leia em janelas até o EOF. Concatene em `KB_CONTENT_CANDIDATE`.
 
+> **Cópia, não ditado (cura da contaminação metodológica).** `KB_CONTENT_CHAMPION` e `KB_CONTENT_CANDIDATE` são **fotocópias byte-a-byte** dos respectivos arquivos. É **PROIBIDO** resumir, reescrever, parafrasear ou **anexar notas/dicas/fórmulas** que não estejam neles (ex.: conversões de unidade, filtros sugeridos). Injetar raciocínio seu no prompt faz a avaliação medir **você**, não a KB — e ainda **favorece artificialmente um dos lados** do champion-vs-candidate, invalidando a decisão de promoção. As perguntas também vão **verbatim** da face pública.
+
 > **Anti-truncamento (invariante I2b — KB completa por avaliador).** Champion e candidate vão **inteiros** para os respectivos `kb-evaluator`. A leitura é dirigida pela contagem (`wc -l`), não por um número fixo de chamadas. Entregar KB **parcial** viola o I2b tão gravemente quanto recortá-la por pergunta. **Nunca dispare os `kb-evaluator` com champion ou candidate truncado.** (O 6f carimba `kb_prompt_hash` de cada lado, tornando isso auditável.)
 
 ### 6b. Disparar 2N kb-evaluator em paralelo (só com a face pública)
@@ -295,6 +297,8 @@ Hashes (16 chars; nunca abortam — fallback PowerShell, depois `"unknown"`):
 - `questions_hash` = sha256(16) de **`<SECRET_PATH>`** (identidade do benchmark; igual nos dois snapshots).
 - **champion**: `kb_hash` = sha256(16) de `kb.md`; `kb_prompt_hash` = sha256(16) do `KB_CONTENT_CHAMPION` enviado (grave-o num arquivo de scratch e hasheie — não escreva em `knowledge-bases/`); `kb_integra = (kb_prompt_hash == kb_hash)`.
 - **candidate**: `kb_hash` = sha256(16) de `kb-candidate.md`; `kb_prompt_hash` = sha256(16) do `KB_CONTENT_CANDIDATE` enviado; `kb_integra` = comparação correspondente.
+
+> **Hash honesto — NÃO pegue atalho.** Cada `kb_prompt_hash` tem de ser o hash do `KB_CONTENT_*` **que você enviou**. É **PROIBIDO** computá-lo lendo/copiando o `.md` do disco "por conveniência" (`cp kb.md …`, `sha256sum kb-candidate.md`): isso força uma igualdade falsa e mascara contaminação. Se os blocos forem fotocópia dos arquivos (6a), os hashes batem honestamente; se não baterem, **não force** — o lado é suspeito.
 
 Grave 2 arquivos no formato `{ meta, results }` — **mesmo bloco `meta` do Passo 7.4 do `/run-eval`** (com `kb_hash`, `kb_prompt_hash`, `kb_integra`, `questions_hash`, agregados `aprovados`/`reprovados`/`erros_gabarito`/`total`/`confianca_media`/`bytes_total`; `bytes_total` inclui os bytes do gabarito):
 
