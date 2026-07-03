@@ -45,7 +45,9 @@ Sem sync de repos. Sem AskUserQuestion. Sem agents de build. Este command é del
 
    a. Meça primeiro: `TOTAL_LINHAS = $(wc -l < "<KB_PATH>")` via Bash.
    b. Leia em janelas sequenciais cobrindo de `offset=1` até `TOTAL_LINHAS`, ex.: `Read(limit=650)`, `Read(offset=650, limit=650)`, `Read(offset=1300, limit=650)`… **até atingir `TOTAL_LINHAS`**. Para a maioria das KBs (≤ ~1300 linhas) isso são 2 chamadas; KBs maiores exigem mais — nunca pare antes do EOF.
-   c. Concatene **todas** as janelas (conteúdo limpo, sem os prefixos de número de linha do Read) em `KB_CONTENT`, na ordem.
+   c. Concatene **todas** as janelas (conteúdo limpo, sem os prefixos de número de linha do Read) em `KB_CONTENT`, na ordem. Este é o **bloco KB único**, reutilizado **idêntico** em todas as N perguntas.
+
+   > **Cópia, não ditado (cura da contaminação metodológica).** `KB_CONTENT` é uma **fotocópia byte-a-byte** do `kb.md`. É **PROIBIDO** resumir, condensar, reescrever, parafrasear, "limpar" ou **anexar notas/dicas/fórmulas** que não estejam no arquivo (ex.: conversões de unidade como "÷86400", filtros sugeridos, "ATENÇÃO:…"). O avaliador tem de receber o `kb.md` **cru**; qualquer raciocínio seu injetado no prompt deixa de medir a KB e passa a medir **você** — é exatamente o vetor de contaminação. Se sentir vontade de "ajudar" o avaliador, **pare**: essa vontade É o erro.
 
    > **Anti-truncamento (invariante I2b — KB completa por avaliador).** A regra é genérica e dirigida pela contagem (`wc -l`), não por um número fixo de leituras: vale para a KB atual e para qualquer KB nova de tamanho desconhecido. Entregar KB **parcial** ao avaliador viola o I2b tão gravemente quanto recortá-la por pergunta — o avaliador isolado precisa do `kb.md` inteiro. **Nunca dispare os `kb-evaluator` com a KB truncada.** (O Passo 7.2 carimba um hash do que de fato foi enviado, para tornar isso auditável.)
 
@@ -75,6 +77,7 @@ Responda apenas com o objeto JSON especificado na sua definição. Sem texto ant
 - **Todas as N chamadas em uma única mensagem** com múltiplos `tool_use` no mesmo turno → execução paralela.
 - Cada subagente recebe **somente uma pergunta** (a pública). Nunca passe múltiplas.
 - KB completa em **cada** prompt (canal único de informação textual).
+- **`<KB_CONTENT>` é byte-a-byte o `kb.md`** (o bloco do Passo 2.1c, idêntico em todos os prompts) e **`<PERGUNTA>` é copiada verbatim da face pública**. **PROIBIDO** resumir/reescrever a KB, reescrever a pergunta ou injetar dicas/fórmulas/conversões. O prompt é só `kb.md` cru + pergunta crua + a linha final — nada mais. (Ver "Cópia, não ditado", Passo 2.1c.)
 - **Nunca passe `KB_PATH:` no prompt** do subagente — passe o conteúdo literal.
 - Neste momento seu contexto **não tem nenhuma `gabarito_sql` nem valor de gabarito** — e é exatamente assim que tem de ser. Não leia a face secreta "para adiantar".
 
@@ -186,13 +189,14 @@ Se `sha256sum` não existir, use o fallback PowerShell (resultado idêntico): `(
 
 **Verificação de KB íntegra (Correção 4 — `kb_prompt_hash` / `kb_integra`).** Detecta se o avaliador recebeu o `kb.md` inteiro ou um recorte/versão truncada:
 
-1. Escreva o `KB_CONTENT` que você de fato enviou aos avaliadores (Passo 2.1c) num arquivo de scratch e hasheie-o:
+1. Escreva o `KB_CONTENT` que você de fato enviou aos avaliadores (Passo 2.1c) num arquivo de scratch e hasheie **esse arquivo**:
    ```bash
-   # KB_CONTENT já está no seu contexto; grave-o EXATAMENTE como foi enviado
+   # grave os BYTES de KB_CONTENT do seu contexto — o MESMO bloco colado nos prompts
    sha256sum "<scratch>/kb_sent.md" 2>/dev/null | head -c 16   # → kb_prompt_hash
    ```
    (Use o diretório de scratch da sessão; não escreva dentro de `knowledge-bases/`.)
-2. `kb_integra = (kb_prompt_hash == kb_hash)`. Se igual → o conteúdo enviado é byte-a-byte o `kb.md` em disco (íntegro). Se **diferente** → marque a run como **suspeita** (a KB pode ter sido truncada/recortada no caminho); ainda assim **grave o snapshot normalmente** e reporte no Passo 9.
+   > **Hash honesto — NÃO pegue atalho (cura do defeito que mascarou a contaminação).** `kb_prompt_hash` tem de ser o hash do **que você enviou** (o `KB_CONTENT`). É **PROIBIDO** computá-lo lendo/copiando o `kb.md` do disco "por conveniência" — `cp kb.md kb_sent.md` ou `sha256sum kb.md` força uma igualdade **falsa** e foi exatamente o que escondeu uma contaminação real. Grave os bytes que **de fato** foram para os prompts. Se você os montou como fotocópia do `kb.md` (Passo 2.1c), os hashes batem **honestamente**; se não baterem, **não force** — a run é suspeita.
+2. `kb_integra = (kb_prompt_hash == kb_hash)`. Se igual → o conteúdo enviado é byte-a-byte o `kb.md` em disco (íntegro). Se **diferente** → marque a run como **suspeita** (KB resumida/truncada/recortada ou dica injetada no caminho); ainda assim **grave o snapshot normalmente** e reporte no Passo 9.
 3. Se `kb_prompt_hash` não puder ser computado, grave `"unknown"` e `kb_integra = null` — **nunca aborte** por isso.
 
 ### 7.3 Agregados
