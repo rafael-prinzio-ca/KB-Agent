@@ -1404,4 +1404,3 @@ FROM `contaazul-ssbi.gold_serve.dim_zendesk_tickets_detailed`
 WHERE LOWER(ticket_category) = 'billing dono de negócio'
   AND assignee_area = 'BACKING_OPS'
   AND DATE(source_solved_at) BETWEEN '<inicio>' AND '<fim>'
-```

@@ -39,17 +39,18 @@ Via Bash `test -e`:
 
 Sem sync de repos. Sem AskUserQuestion. Sem agents de build. Este command é deliberadamente enxuto.
 
-## Passo 2 — Carregar KB + face pública (NUNCA a secreta)
+## Passo 2 — Preparar cópia isolada da KB + carregar face pública (NUNCA a secreta)
 
-1. Leia `<KB_PATH>` **integralmente**, guiando-se pela contagem real de linhas (KBs variam de tamanho por fonte de negócio — suporte, churn, etc. — e podem exceder 25K tokens). O número de chamadas **não é fixo**: depende do tamanho do `kb.md` desta run.
+1. **Cópia isolada da KB (o avaliador a lê sozinho).** Você **não** lê mais o `kb.md` para embutir no prompt. Em vez disso, faça uma **cópia byte-exata** num diretório de scratch da sessão e passe aos avaliadores **apenas o caminho** dela.
 
-   a. Meça primeiro: `TOTAL_LINHAS = $(wc -l < "<KB_PATH>")` via Bash.
-   b. Leia em janelas sequenciais cobrindo de `offset=1` até `TOTAL_LINHAS`, ex.: `Read(limit=650)`, `Read(offset=650, limit=650)`, `Read(offset=1300, limit=650)`… **até atingir `TOTAL_LINHAS`**. Para a maioria das KBs (≤ ~1300 linhas) isso são 2 chamadas; KBs maiores exigem mais — nunca pare antes do EOF.
-   c. Concatene **todas** as janelas (conteúdo limpo, sem os prefixos de número de linha do Read) em `KB_CONTENT`, na ordem. Este é o **bloco KB único**, reutilizado **idêntico** em todas as N perguntas.
+   a. Defina `SCRATCH_DIR` = um diretório de scratch **opaco e único** da sessão (**fora** de `knowledge-bases/`), criado com `SCRATCH_DIR=$(python -c "import tempfile; print(tempfile.mkdtemp())")` — **não** `mktemp -d` (devolve caminho POSIX `/tmp/...` que a tool `Read` não abre no Windows/Git Bash). **O nome do `SCRATCH_DIR` NÃO pode conter o slug `<kb>` nem derivar dele** — senão o slug vaza embutido no `KB_FILE` (ver nota de isolamento abaixo). Se quiser registrar o caminho para debug, faça-o **só na sua saída**, nunca no prompt do avaliador.
+   b. Via Bash: `cp "<KB_PATH>" "<SCRATCH_DIR>/kb.md"` (o `SCRATCH_DIR` já foi criado no passo a). Defina `KB_FILE = <SCRATCH_DIR>/kb.md`. O arquivo-cópia é sempre `kb.md` (nome genérico, sem slug).
+   c. Meça o tamanho real para a verificação de integridade (Passo 7.2): `KB_LINHAS = $(wc -l < "<KB_PATH>")` via Bash.
+   d. Compute o **marcador de EOF** para a prova de leitura íntegra (Passo 7.2): `KB_ULTIMA_LINHA` = a **última linha não-vazia** do `<KB_PATH>`, com `strip()` e truncada em **120 caracteres**. Use Python (mesma convenção do avaliador) — ex.: `python -c "import sys;ls=[l.rstrip('\n') for l in open(sys.argv[1],encoding='utf-8')];nb=[l for l in ls if l.strip()];print(nb[-1].strip()[:120] if nb else '')" "<KB_PATH>"`. Guarde o resultado como `KB_ULTIMA_LINHA`. **Este valor NUNCA entra no prompt do avaliador** — é só para conferência posterior (Passo 7.2).
 
-   > **Cópia, não ditado (cura da contaminação metodológica).** `KB_CONTENT` é uma **fotocópia byte-a-byte** do `kb.md`. É **PROIBIDO** resumir, condensar, reescrever, parafrasear, "limpar" ou **anexar notas/dicas/fórmulas** que não estejam no arquivo (ex.: conversões de unidade como "÷86400", filtros sugeridos, "ATENÇÃO:…"). O avaliador tem de receber o `kb.md` **cru**; qualquer raciocínio seu injetado no prompt deixa de medir a KB e passa a medir **você** — é exatamente o vetor de contaminação. Se sentir vontade de "ajudar" o avaliador, **pare**: essa vontade É o erro.
+   > **Cópia, não ditado.** Use `cp` (cópia byte-a-byte) — **nunca** reescreva, resuma, edite, filtre ou regere a KB, e **nunca** cole conteúdo de KB no prompt do avaliador. O avaliador tem de ler o `kb.md` **cru**.
 
-   > **Anti-truncamento (invariante I2b — KB completa por avaliador).** A regra é genérica e dirigida pela contagem (`wc -l`), não por um número fixo de leituras: vale para a KB atual e para qualquer KB nova de tamanho desconhecido. Entregar KB **parcial** ao avaliador viola o I2b tão gravemente quanto recortá-la por pergunta — o avaliador isolado precisa do `kb.md` inteiro. **Nunca dispare os `kb-evaluator` com a KB truncada.** (O Passo 7.2 carimba um hash do que de fato foi enviado, para tornar isso auditável.)
+   > **Isolamento — passe só o caminho da cópia.** Ao avaliador vai **apenas** `KB_FILE` (o caminho em scratch). **NUNCA** passe `KB_DIR`, o slug `<kb>`, nem qualquer caminho sob `knowledge-bases/`. **Isso inclui o próprio `KB_FILE`: o slug não pode aparecer em nenhuma parte do caminho — nem no nome do diretório de scratch, nem no do arquivo.** É isso que impede o avaliador de **localizar** a face secreta (`questions.secret.json`), que permanece só no `KB_DIR`.
 
 2. Leia **somente** `<PUBLIC_PATH>` e parseie. Esperado: array de objetos `{ id (number), pergunta (string) }`. Guarde como `PERGUNTAS`. **Não leia `<SECRET_PATH>`** — ela não entra no seu contexto neste passo nem em nenhum momento da montagem dos prompts. Quem a lê é o `golden-runner` (Passo 5).
 
@@ -59,12 +60,11 @@ Para **cada** item de `PERGUNTAS`, invoque `Agent` com:
 
 - `subagent_type`: `kb-evaluator`
 - `description`: `"Avalia pergunta #<id>"`
-- `prompt`: template abaixo, substituindo `<KB_CONTENT>` e `<PERGUNTA>` (a `pergunta` da face pública).
+- `prompt`: template abaixo, substituindo `<KB_FILE>` (o caminho da cópia, idêntico em todas as N chamadas) e `<PERGUNTA>` (a `pergunta` da face pública).
 
 Template:
 ```
-BASE DE CONHECIMENTO:
-<KB_CONTENT>
+KB_FILE: <KB_FILE>
 
 PERGUNTA:
 <PERGUNTA>
@@ -74,11 +74,11 @@ Responda apenas com o objeto JSON especificado na sua definição. Sem texto ant
 
 ### Regras críticas
 
-- **Todas as N chamadas em uma única mensagem** com múltiplos `tool_use` no mesmo turno → execução paralela.
+- **Todas as N chamadas em uma única mensagem** com múltiplos `tool_use` no mesmo turno → execução paralela. (Agora cabe: o prompt é enxuto — só caminho + pergunta.)
 - Cada subagente recebe **somente uma pergunta** (a pública). Nunca passe múltiplas.
-- KB completa em **cada** prompt (canal único de informação textual).
-- **`<KB_CONTENT>` é byte-a-byte o `kb.md`** (o bloco do Passo 2.1c, idêntico em todos os prompts) e **`<PERGUNTA>` é copiada verbatim da face pública**. **PROIBIDO** resumir/reescrever a KB, reescrever a pergunta ou injetar dicas/fórmulas/conversões. O prompt é só `kb.md` cru + pergunta crua + a linha final — nada mais. (Ver "Cópia, não ditado", Passo 2.1c.)
-- **Nunca passe `KB_PATH:` no prompt** do subagente — passe o conteúdo literal.
+- Todos os prompts apontam para a **mesma** cópia (`KB_FILE`); o avaliador lê a KB **inteira** sozinho via `Read` (canal único de informação — ele mesmo busca).
+- **`<PERGUNTA>` é copiada verbatim da face pública.** **PROIBIDO** reescrever a pergunta ou injetar dicas/fórmulas/conversões. Você não monta conteúdo de KB nenhum — não há o que resumir.
+- **Passe SÓ `KB_FILE` (o caminho da cópia em scratch).** **NUNCA** passe `KB_DIR`, o slug `<kb>`, nem o caminho real do `kb.md` em `knowledge-bases/` — senão o avaliador poderia localizar a face secreta. **O slug também não pode estar embutido no `KB_FILE`** (nome do diretório de scratch ou do arquivo) — use `SCRATCH_DIR` opaco (Passo 2.1a). O canal é o **caminho da cópia**, não o texto da KB.
 - Neste momento seu contexto **não tem nenhuma `gabarito_sql` nem valor de gabarito** — e é exatamente assim que tem de ser. Não leia a face secreta "para adiantar".
 
 ## Passo 4 — Coletar respostas dos avaliadores (parse tolerante)
@@ -89,7 +89,7 @@ Para cada resposta:
 2. **Strip de texto fora do JSON**: extraia entre primeiro `{` e último `}`.
 3. `JSON.parse` no candidato.
 4. Se falhar, registre `parse_error: true`, `_raw_output: "<truncado>"`, siga.
-5. Se OK, capture: `encontrada`, `valor`, `unidade`, `confianca`, `confianca_score`, `explicacao`, `sql_executado`, `bytes_processed`, `job_id`. Sinalize `parse_lenient: true` quando precisou de strip.
+5. Se OK, capture: `encontrada`, `valor`, `unidade`, `confianca`, `confianca_score`, `explicacao`, `sql_executado`, `bytes_processed`, `job_id`, `kb_linhas_lidas`, `kb_ultima_linha`. Sinalize `parse_lenient: true` quando precisou de strip.
 
 ## Passo 5 — Estabelecer a verdade via `golden-runner` (depois que os avaliadores já responderam)
 
@@ -149,7 +149,7 @@ Quando `esperava_encontrar == true`, `encontrada_obtida == true` e o `status` **
 Aplique quando `encontrada_obtida == true`. `execucao_ok = true` se **todos**:
 1. `sql_executado` é string não-vazia contendo `SELECT` (case-insensitive).
 2. `bytes_processed` é integer `>= 0`.
-3. `job_id` é string não-vazia, alfanumérica, `len >= 8`.
+3. `job_id` é string não-vazia com `len >= 8` casando `^[A-Za-z0-9_-]+$` (aceita UUID com hífen — **formato real** do `queryId` retornado pelo BigQuery Python client — e também o formato `bquxjob_...` do Console). **Não** exija "alfanumérico puro": o `queryId` real (`job.job_id`) tem hífens, e essa regra ao pé da letra reprovaria toda run.
 
 Quando `encontrada_obtida == false`, `execucao_ok = null`.
 
@@ -187,17 +187,16 @@ Se `sha256sum` não existir, use o fallback PowerShell (resultado idêntico): `(
 
 > `questions_hash` agora é o hash da **face secreta** (`questions.secret.json`) — é ela que define a identidade do benchmark (gabaritos + tolerâncias). A face pública por si só não distingue duas versões de gabarito.
 
-**Verificação de KB íntegra (Correção 4 — `kb_prompt_hash` / `kb_integra`).** Detecta se o avaliador recebeu o `kb.md` inteiro ou um recorte/versão truncada:
+**Verificação de KB íntegra (`kb_prompt_hash` + `kb_integra`).** Como o avaliador lê a KB de uma cópia byte-exata (`cp`, Passo 2.1b) e o orquestrador não manipula o conteúdo, use três checagens, todas baratas e nunca-abortantes:
 
-1. Escreva o `KB_CONTENT` que você de fato enviou aos avaliadores (Passo 2.1c) num arquivo de scratch e hasheie **esse arquivo**:
+1. **`kb_prompt_hash`** = sha256 (16 chars) da **cópia** que os avaliadores leram (`KB_FILE`):
    ```bash
-   # grave os BYTES de KB_CONTENT do seu contexto — o MESMO bloco colado nos prompts
-   sha256sum "<scratch>/kb_sent.md" 2>/dev/null | head -c 16   # → kb_prompt_hash
+   sha256sum "<KB_FILE>" 2>/dev/null | head -c 16   # → kb_prompt_hash (a cópia em scratch que o avaliador leu)
    ```
-   (Use o diretório de scratch da sessão; não escreva dentro de `knowledge-bases/`.)
-   > **Hash honesto — NÃO pegue atalho (cura do defeito que mascarou a contaminação).** `kb_prompt_hash` tem de ser o hash do **que você enviou** (o `KB_CONTENT`). É **PROIBIDO** computá-lo lendo/copiando o `kb.md` do disco "por conveniência" — `cp kb.md kb_sent.md` ou `sha256sum kb.md` força uma igualdade **falsa** e foi exatamente o que escondeu uma contaminação real. Grave os bytes que **de fato** foram para os prompts. Se você os montou como fotocópia do `kb.md` (Passo 2.1c), os hashes batem **honestamente**; se não baterem, **não force** — a run é suspeita.
-2. `kb_integra = (kb_prompt_hash == kb_hash)`. Se igual → o conteúdo enviado é byte-a-byte o `kb.md` em disco (íntegro). Se **diferente** → marque a run como **suspeita** (KB resumida/truncada/recortada ou dica injetada no caminho); ainda assim **grave o snapshot normalmente** e reporte no Passo 9.
-3. Se `kb_prompt_hash` não puder ser computado, grave `"unknown"` e `kb_integra = null` — **nunca aborte** por isso.
+   Como veio de `cp "<KB_PATH>"`, confirma que a cópia é byte-a-byte o `kb.md` do disco. `kb_integra_arquivo = (kb_prompt_hash == kb_hash)` — `false` só se o `cp` corrompeu ou foi para um arquivo errado. Hashear a cópia aqui é o correto: é literalmente o que o avaliador leu.
+2. **Prova de tamanho lido (sinal grosso)** — o hash não prova que o avaliador leu a KB toda, só que o arquivo está inteiro. Use o campo de prova `kb_linhas_lidas` (Passo 4) de cada avaliador contra `KB_LINHAS` (Passo 2.1c): se **algum** avaliador reportar `kb_linhas_lidas` fora de ±1 de `KB_LINHAS`, houve **leitura parcial** → run **suspeita**. (A tolerância ±1 é *slop* de convenção: `wc -l` conta `\n`, o `Read` pode numerar uma linha final sem `\n`. É dissuasor de recorte grosseiro, não prova de EOF — para isso serve a checagem 3.)
+3. **Prova de leitura até o EOF (marcador de conteúdo)** — a prova forte de que o avaliador chegou ao **fim** da KB. Compare o campo `kb_ultima_linha` (Passo 4) de cada avaliador com `KB_ULTIMA_LINHA` (Passo 2.1d): se **algum** divergir (comparação exata das strings já normalizadas — `strip`, ≤120 chars), a leitura **não chegou ao fim** → run **suspeita**. Este marcador vem do `kb.md` (conteúdo público, não a face secreta) e o valor esperado **nunca** foi ao prompt do avaliador — por isso um agente que não tivesse lido o fim não teria como acertá-lo.
+4. `kb_integra = (kb_integra_arquivo == true) E (todos os avaliadores com kb_linhas_lidas dentro de ±1 de KB_LINHAS) E (todos os avaliadores com kb_ultima_linha == KB_ULTIMA_LINHA)`. `true` → cópia íntegra, lida por inteiro **e** até o EOF por todos. `false` → **suspeita** (cópia corrompida, leitura parcial, ou não chegou ao fim); ainda assim **grave o snapshot normalmente** e reporte no Passo 9. Se `kb_prompt_hash`/`KB_LINHAS`/`KB_ULTIMA_LINHA` não computarem, grave `"unknown"` naquela sub-checagem (não a force para `false`) e, se nenhuma sub-checagem for conclusiva, `kb_integra = null` — **nunca aborte**.
 
 ### 7.3 Agregados
 
@@ -221,6 +220,7 @@ Defina `meta.mode = "quick"` se `QUICK_MODE`, senão `"full"`. Write em `<RESULT
     "kb_hash": "<kb_hash ou unknown>",
     "kb_prompt_hash": "<kb_prompt_hash ou unknown>",
     "kb_integra": true,
+    "kb_ultima_linha_esperada": "<KB_ULTIMA_LINHA ou unknown>",
     "questions_hash": "<questions_hash ou unknown>",
     "mode": "full",
     "aprovados": 5,
@@ -245,7 +245,7 @@ Cada elemento de `results` segue este schema. O `valor_gabarito` e a `gabarito_s
   "tolerancia_relativa": 0.05,
   "gabarito_sql": "SELECT COALESCE(SUM(...), 0) FROM `...`",
   "valor_gabarito": 100000,
-  "gabarito_job_id": "bquxjob_9f8e7d6c_18f9e0a7b21",
+  "gabarito_job_id": "9f8e7d6c-4b2a-41e0-8c3d-1e2f3a4b5c6d",
   "gabarito_bytes": 252816,
   "gabarito_ok": true,
   "valor_obtido": 100000,
@@ -256,7 +256,9 @@ Cada elemento de `results` segue este schema. O `valor_gabarito` e a `gabarito_s
   "explicacao": "...",
   "sql_executado": "SELECT COUNT(*) FROM `...`",
   "bytes_processed": 0,
-  "job_id": "bquxjob_1a2b3c4d_18f9e0a7b21",
+  "job_id": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+  "kb_linhas_lidas": 1407,
+  "kb_ultima_linha": "| sum_of_interactions | INTEGER | total de interações do bot |",
   "encontrada_ok": true,
   "unidade_ok": true,
   "delta_absoluto": 0,
@@ -269,6 +271,8 @@ Cada elemento de `results` segue este schema. O `valor_gabarito` e a `gabarito_s
 ```
 
 > A `pergunta` no `results` vem da face pública. Os campos de gabarito vêm do `golden-runner`. Em `status == "erro_gabarito"`: `gabarito_ok = false`, `valor_gabarito = null`, e os campos do candidato ainda são preenchidos com o que ele retornou — mas `delta_*` ficam `null` e `dentro_tolerancia = false`.
+
+> Os valores no schema acima são **exemplos ilustrativos** (como `valor_gabarito: 100000` e o `kb_ultima_linha` de exemplo), não fixos. Em especial, **`kb_linhas_lidas` e `kb_ultima_linha` são dinâmicos**: são a contagem real de linhas e a última linha não-vazia que o avaliador leu naquela run — **variam por KB e por versão**. O orquestrador compara `kb_linhas_lidas` com `KB_LINHAS` (`wc -l`) e `kb_ultima_linha` com `KB_ULTIMA_LINHA` (marcador de EOF do `kb.md` da própria run); se uma KB crescer/encolher, os dois lados acompanham juntos. Nada é hardcoded — divergência de linhas sinaliza leitura parcial; divergência do marcador sinaliza que a leitura não chegou ao fim. Os `job_id`/`gabarito_job_id` de exemplo são UUIDs (formato real do BigQuery Python client).
 
 > `mode` é `"quick"` quando rodado com `--quick`; senão `"full"`. (Os modos `"champion"`/`"candidate"` pertencem ao `/create-kb` e viram `"full"` na promoção.)
 
@@ -344,10 +348,12 @@ No modo quick, **encerre aqui** (não imprima 9b).
 
 Se `kb_integra == false`, imprima **antes de tudo** o alerta de integridade:
 ```
-⚠ KB SUSPEITA: o conteúdo enviado aos avaliadores não bate com kb.md em disco.
-  kb_hash (disco):     <kb_hash>
-  kb_prompt_hash (env): <kb_prompt_hash>
-  Provável causa: KB truncada/recortada na leitura (Passo 2) ou editada durante a run.
+⚠ KB SUSPEITA: a KB que os avaliadores usaram não corresponde ao kb.md íntegro em disco, ou não foi lida até o fim.
+  kb_hash (disco):      <kb_hash>
+  kb_prompt_hash (cópia): <kb_prompt_hash>
+  KB_LINHAS (disco): <KB_LINHAS>  ·  kb_linhas_lidas divergentes: #<ids>
+  KB_ULTIMA_LINHA (disco): "<KB_ULTIMA_LINHA>"  ·  kb_ultima_linha divergentes: #<ids>
+  Provável causa: cópia de scratch corrompida/errada (hash difere) OU leitura parcial (linhas divergem) OU leitura não chegou ao EOF (última linha diverge).
   Trate os resultados desta run com desconfiança e rode novamente.
 ────────────────────────────────────────
 ```
@@ -413,5 +419,6 @@ Motivo curto (em ordem de prioridade):
 - **Sem AskUserQuestion**: este command roda sem interação.
 - **Snapshot é `{ meta, results }`**: o array por-pergunta vai dentro de `results`. Snapshots antigos (array nu, sem `meta`) são tolerados na leitura e **nunca** reescritos.
 - **Índice e hashes nunca abortam**: `_index.json` é append-only e não-crítico; sha256 que falhar grava `"unknown"`. `kb_integra == false` **sinaliza** (run suspeita) mas **não** aborta.
+- **Prova de leitura íntegra é conferida, nunca ditada**: o `KB_ULTIMA_LINHA` (marcador de EOF) e o `KB_LINHAS` são computados pelo orquestrador a partir do `kb.md` e **nunca** entram no prompt do avaliador. O avaliador produz `kb_ultima_linha`/`kb_linhas_lidas` cego, a partir do que leu; o orquestrador só compara **depois** de coletar. O marcador vem da KB (conteúdo público), nunca da face secreta — não afeta o isolamento do gabarito.
 - **`--quick` é só apresentação**: usa a MESMA avaliação e grava+indexa snapshot normalmente (`mode:"quick"`). Muda apenas o baseline (última run verde) e o formato de saída.
 - **Comparação longitudinal é custo zero**: regressão/baseline cruzam só snapshots/índice — nunca disparam BigQuery extra.

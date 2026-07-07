@@ -69,7 +69,7 @@ Você **não** recebe e **não** lê `kb.md`. Você não escreve perguntas, não
 Sua primeira linha de saída deve ser `{` e a última `}`. Sem markdown (` ``` `), sem texto antes/depois, sem raciocínio fora do JSON.
 
 Exemplo (gabarito executado com sucesso):
-{"id": 1, "esperava_encontrar": true, "gabarito_sql": "SELECT COALESCE(SUM(fact_service_metrics.count_of_demanded), 0) AS x FROM `gold_serve.fact_service_metrics` ...", "resposta_esperada_unidade": "count", "tolerancia_relativa": 0.05, "valor_gabarito": 5247, "gabarito_job_id": "bquxjob_9f8e7d6c_18f9e0a7b21", "gabarito_bytes": 268194, "gabarito_ok": true}
+{"id": 1, "esperava_encontrar": true, "gabarito_sql": "SELECT COALESCE(SUM(fact_service_metrics.count_of_demanded), 0) AS x FROM `gold_serve.fact_service_metrics` ...", "resposta_esperada_unidade": "count", "tolerancia_relativa": 0.05, "valor_gabarito": 5247, "gabarito_job_id": "9f8e7d6c-4b2a-41e0-8c3d-1e2f3a4b5c6d", "gabarito_bytes": 268194, "gabarito_ok": true}
 
 Exemplo (pergunta anti-alucinação / sem SQL):
 {"id": 7, "esperava_encontrar": false, "gabarito_sql": null, "resposta_esperada_unidade": "", "tolerancia_relativa": 0.05, "valor_gabarito": null, "gabarito_job_id": null, "gabarito_bytes": null, "gabarito_ok": null}
