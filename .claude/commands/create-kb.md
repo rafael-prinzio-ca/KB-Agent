@@ -224,31 +224,31 @@ Fim do command. Não roda eval automaticamente.
 
 > Mesmo isolamento do `/run-eval`: avaliadores a partir da face pública **primeiro**, `golden-runner` **depois**. O gabarito (computado **uma vez**) julga champion e candidate contra o **mesmo** `valor_gabarito` — é isso que torna o A/B justo.
 
-### 6a. Ler face pública + as duas KBs (NUNCA a secreta)
+### 6a. Ler face pública + preparar cópias isoladas das duas KBs (NUNCA a secreta)
 
 1. Leia `<PUBLIC_PATH>` (1 Read) e parseie como array `PERGUNTAS` (`id`+`pergunta`). **Não leia `<SECRET_PATH>`.**
-2. Leia `<KB_PATH>` (champion) **integralmente**, guiando-se pela contagem real de linhas (KBs variam de tamanho e podem exceder 25K tokens; o número de chamadas **não é fixo**):
-   a. `TOTAL_CHAMPION = $(wc -l < "<KB_PATH>")` via Bash.
-   b. Leia em janelas sequenciais de `offset=1` até `TOTAL_CHAMPION`, ex.: `Read(limit=650)`, `Read(offset=650, limit=650)`… **até o EOF**.
-   c. Concatene **todas** as janelas (conteúdo limpo), na ordem, em `KB_CONTENT_CHAMPION`.
-3. Leia `<CANDIDATE_PATH>` (candidate) da mesma forma — meça `TOTAL_CANDIDATE` e leia em janelas até o EOF. Concatene em `KB_CONTENT_CANDIDATE`.
+2. **Não** leia mais o `kb.md`/`kb-candidate.md` para embutir no prompt. Em vez disso, faça **cópias byte-exatas** num diretório de scratch da sessão (**fora** de `knowledge-bases/`) e passe aos avaliadores **apenas os caminhos**. Via Bash:
+   - `SCRATCH_DIR=$(python -c "import tempfile; print(tempfile.mkdtemp())")` — diretório **opaco e único** (**não** `mktemp -d`: caminho POSIX que o `Read` não abre no Windows). **O nome do `SCRATCH_DIR` NÃO pode conter o slug `<kb>` nem derivar dele** (senão o slug vaza embutido no `KB_FILE` — ver nota de isolamento abaixo). Os arquivos-filho são `champion.md`/`candidate.md` (nomes genéricos, sem slug). Se logar o caminho para debug, só na sua saída, nunca no prompt do avaliador.
+   - `cp "<KB_PATH>" "<SCRATCH_DIR>/champion.md"` → `KB_FILE_CHAMPION = <SCRATCH_DIR>/champion.md`
+   - `cp "<CANDIDATE_PATH>" "<SCRATCH_DIR>/candidate.md"` → `KB_FILE_CANDIDATE = <SCRATCH_DIR>/candidate.md`
+   - `KB_LINHAS_CHAMPION = $(wc -l < "<KB_PATH>")` e `KB_LINHAS_CANDIDATE = $(wc -l < "<CANDIDATE_PATH>")` (para a verificação de integridade no 6f).
+   - **Marcador de EOF por lado** (para a prova de leitura íntegra no 6f): `KB_ULTIMA_LINHA_CHAMPION` / `KB_ULTIMA_LINHA_CANDIDATE` = a **última linha não-vazia** de cada arquivo, com `strip()` e truncada em **120 caracteres** (mesma convenção do `/run-eval` Passo 2.1d — ex.: `python -c "import sys;ls=[l.rstrip(chr(10)) for l in open(sys.argv[1],encoding='utf-8')];nb=[l for l in ls if l.strip()];print(nb[-1].strip()[:120] if nb else '')" "<path>"`). **Esses valores NUNCA entram no prompt do avaliador** — só servem para conferência no 6f.
 
-> **Cópia, não ditado (cura da contaminação metodológica).** `KB_CONTENT_CHAMPION` e `KB_CONTENT_CANDIDATE` são **fotocópias byte-a-byte** dos respectivos arquivos. É **PROIBIDO** resumir, reescrever, parafrasear ou **anexar notas/dicas/fórmulas** que não estejam neles (ex.: conversões de unidade, filtros sugeridos). Injetar raciocínio seu no prompt faz a avaliação medir **você**, não a KB — e ainda **favorece artificialmente um dos lados** do champion-vs-candidate, invalidando a decisão de promoção. As perguntas também vão **verbatim** da face pública.
+> **Cópia, não ditado.** As cópias vêm de `cp` (byte-a-byte); **nunca** reescreva, resuma, edite ou filtre nenhuma KB — além de contaminar a medição, isso favoreceria artificialmente um dos lados do champion-vs-candidate. As perguntas vão **verbatim** da face pública.
 
-> **Anti-truncamento (invariante I2b — KB completa por avaliador).** Champion e candidate vão **inteiros** para os respectivos `kb-evaluator`. A leitura é dirigida pela contagem (`wc -l`), não por um número fixo de chamadas. Entregar KB **parcial** viola o I2b tão gravemente quanto recortá-la por pergunta. **Nunca dispare os `kb-evaluator` com champion ou candidate truncado.** (O 6f carimba `kb_prompt_hash` de cada lado, tornando isso auditável.)
+> **Isolamento — passe só os caminhos das cópias.** Cada avaliador recebe **apenas** `KB_FILE` (o caminho da cópia do lado correto). **NUNCA** passe `KB_DIR`, o slug `<kb>`, nem caminhos sob `knowledge-bases/` — é isso que impede o avaliador de localizar a face secreta. **Isso inclui o próprio `KB_FILE`: o slug não pode aparecer em nenhuma parte do caminho** (nome do `SCRATCH_DIR` ou do arquivo) — use `SCRATCH_DIR` opaco (6a.2). O avaliador lê a KB **inteira** sozinho via `Read`; a prova de leitura íntegra vem de `kb_linhas_lidas` (6c/6f).
 
 ### 6b. Disparar 2N kb-evaluator em paralelo (só com a face pública)
 
 Em **uma única mensagem**, dispare `2 * N` (N = número de perguntas) `Agent(subagent_type="kb-evaluator")`:
 
-- N instâncias com `KB_CONTENT_CHAMPION` + cada `pergunta` (pública).
-- N instâncias com `KB_CONTENT_CANDIDATE` + cada `pergunta` (pública).
+- N instâncias com `KB_FILE_CHAMPION` + cada `pergunta` (pública).
+- N instâncias com `KB_FILE_CANDIDATE` + cada `pergunta` (pública).
 
-Template do prompt (mesmo do `/run-eval`):
+Template do prompt (mesmo do `/run-eval`, enxuto — só caminho + pergunta):
 
 ```
-BASE DE CONHECIMENTO:
-<KB_CONTENT_(CHAMPION|CANDIDATE)>
+KB_FILE: <KB_FILE_(CHAMPION|CANDIDATE)>
 
 PERGUNTA:
 <PERGUNTA>
@@ -256,11 +256,11 @@ PERGUNTA:
 Responda apenas com o objeto JSON especificado na sua definição. Sem texto antes, sem texto depois.
 ```
 
-Use `description` distinto: `"Champion #<id>"` e `"Candidate #<id>"`. Neste momento seu contexto **não tem nenhum gabarito** — e tem de continuar assim.
+**Passe SÓ o `KB_FILE` do lado correto** (nunca `KB_DIR`/slug/caminho em `knowledge-bases/`, e o slug não pode estar embutido no próprio `KB_FILE` — use `SCRATCH_DIR` opaco, 6a.2). Use `description` distinto: `"Champion #<id>"` e `"Candidate #<id>"`. Neste momento seu contexto **não tem nenhum gabarito** — e tem de continuar assim.
 
 ### 6c. Coletar respostas (parse tolerante)
 
-Para cada uma das 2N respostas: strip de markdown (` ```json `, ` ``` `); extrair entre primeiro `{` e último `}`; `JSON.parse`; falhou → `parse_error: true`; OK → capture `encontrada`, `valor`, `unidade`, `confianca`, `confianca_score`, `explicacao`, `sql_executado`, `bytes_processed`, `job_id`.
+Para cada uma das 2N respostas: strip de markdown (` ```json `, ` ``` `); extrair entre primeiro `{` e último `}`; `JSON.parse`; falhou → `parse_error: true`; OK → capture `encontrada`, `valor`, `unidade`, `confianca`, `confianca_score`, `explicacao`, `sql_executado`, `bytes_processed`, `job_id`, `kb_linhas_lidas`, `kb_ultima_linha`.
 
 ### 6d. Estabelecer a verdade via `golden-runner` (depois dos avaliadores; uma vez, vale p/ os dois lados)
 
@@ -295,10 +295,10 @@ Não reimplemente as fórmulas aqui — o Passo 6 do `/run-eval` é a fonte can�
 
 Hashes (16 chars; nunca abortam — fallback PowerShell, depois `"unknown"`):
 - `questions_hash` = sha256(16) de **`<SECRET_PATH>`** (identidade do benchmark; igual nos dois snapshots).
-- **champion**: `kb_hash` = sha256(16) de `kb.md`; `kb_prompt_hash` = sha256(16) do `KB_CONTENT_CHAMPION` enviado (grave-o num arquivo de scratch e hasheie — não escreva em `knowledge-bases/`); `kb_integra = (kb_prompt_hash == kb_hash)`.
-- **candidate**: `kb_hash` = sha256(16) de `kb-candidate.md`; `kb_prompt_hash` = sha256(16) do `KB_CONTENT_CANDIDATE` enviado; `kb_integra` = comparação correspondente.
+- **champion**: `kb_hash` = sha256(16) de `kb.md`; `kb_prompt_hash` = sha256(16) da **cópia** `KB_FILE_CHAMPION` que os avaliadores leram; `kb_integra` = (`kb_prompt_hash == kb_hash`) **E** (todos os N avaliadores champion com `kb_linhas_lidas` dentro de ±1 de `KB_LINHAS_CHAMPION`) **E** (todos com `kb_ultima_linha == KB_ULTIMA_LINHA_CHAMPION`). Grave `KB_ULTIMA_LINHA_CHAMPION` em `meta.kb_ultima_linha_esperada`.
+- **candidate**: `kb_hash` = sha256(16) de `kb-candidate.md`; `kb_prompt_hash` = sha256(16) da cópia `KB_FILE_CANDIDATE`; `kb_integra` = comparação correspondente contra `KB_LINHAS_CANDIDATE` **e** `KB_ULTIMA_LINHA_CANDIDATE`. Grave `KB_ULTIMA_LINHA_CANDIDATE` em `meta.kb_ultima_linha_esperada`.
 
-> **Hash honesto — NÃO pegue atalho.** Cada `kb_prompt_hash` tem de ser o hash do `KB_CONTENT_*` **que você enviou**. É **PROIBIDO** computá-lo lendo/copiando o `.md` do disco "por conveniência" (`cp kb.md …`, `sha256sum kb-candidate.md`): isso força uma igualdade falsa e mascara contaminação. Se os blocos forem fotocópia dos arquivos (6a), os hashes batem honestamente; se não baterem, **não force** — o lado é suspeito.
+> **Integridade — hash da cópia + prova de leitura (mesma tripla do `/run-eval` Passo 7.2).** Hasheie a **cópia de scratch** (`KB_FILE_*`) — é o que o avaliador leu. Depois cheque, por lado: (1) `kb_prompt_hash == kb_hash` (cópia íntegra); (2) `kb_linhas_lidas` vs `KB_LINHAS_*` (±1, leu inteiro); (3) `kb_ultima_linha` vs `KB_ULTIMA_LINHA_*` (chegou ao EOF). Qualquer divergência → aquele lado é **suspeito** (`kb_integra = false`); nunca aborta. O marcador vem da KB de cada lado (conteúdo público), nunca da face secreta, e o esperado nunca vai ao prompt do avaliador — isolamento intacto.
 
 Grave 2 arquivos no formato `{ meta, results }` — **mesmo bloco `meta` do Passo 7.4 do `/run-eval`** (com `kb_hash`, `kb_prompt_hash`, `kb_integra`, `questions_hash`, agregados `aprovados`/`reprovados`/`erros_gabarito`/`total`/`confianca_media`/`bytes_total`; `bytes_total` inclui os bytes do gabarito):
 
@@ -439,5 +439,5 @@ Se `--regenerate-questions` foi usado, imprima também:
 - **Gabarito é computado uma vez pelo `golden-runner`, verbatim, e compartilhado**: nunca regenerado, nunca no prompt do candidato; o mesmo `valor_gabarito` julga champion e candidate. Falha vira `erro_gabarito` nos dois lados — não vira regressão/melhoria.
 - **Conferência usa o scoring canônico do `/run-eval` Passo 6**: não reimplemente as fórmulas.
 - **Nunca ajuste manualmente as respostas dos subagentes**: registre o que retornaram.
-- **Nunca leia kb.md no orquestrador para tomar decisões**: você lê só para passar ao kb-evaluator no 6a. A decisão de promoção é baseada em diff de resultados, não em diff de markdown.
+- **Nunca leia kb.md no orquestrador para tomar decisões**: no 6a você só faz `cp` das duas KBs para scratch e passa os caminhos ao kb-evaluator (nunca embute o conteúdo, nunca inspeciona para julgar). A decisão de promoção é baseada em diff de resultados, não em diff de markdown.
 - **Snapshots carregam `meta`**: champion/candidate são `{ meta, results }` com `mode` correspondente + `kb_prompt_hash`/`kb_integra` por lado. Só a consolidação (Passo 8) appenda a entrada canônica (`mode:"full"`) ao `_index.json`. Staging **nunca** entra na linha do tempo. Falha de índice/hash emite aviso, nunca aborta; `kb_integra == false` sinaliza, não aborta.
