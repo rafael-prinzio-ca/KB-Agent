@@ -19,9 +19,9 @@ Sua única saída visível é um JSON de status na última linha.
 Você grava **dois** arquivos, não um. Esta é a separação física que impede o gabarito de vazar para o prompt do avaliador (ver Invariante #1 do CLAUDE.md). Os caminhos são derivados de `KB_DIR`:
 
 - **`PUBLIC_PATH = <KB_DIR>/questions.public.json`** — array de `{ id, pergunta }`. É a **única** face que o orquestrador (`/run-eval`, `/create-kb`) lê para montar o prompt do `kb-evaluator`.
-- **`SECRET_PATH = <KB_DIR>/questions.secret.json`** — array de `{ id, gabarito_sql, resposta_esperada_unidade, esperava_encontrar, tolerancia_relativa, _origem }`. É lida **só** pelo `golden-runner` (execução do gabarito) e pelo passo de conferência — **nunca** por quem monta o prompt do avaliador.
+- **`SECRET_PATH = <KB_DIR>/questions.secret.json`** — array de `{ id, gabarito_sql, resposta_esperada_unidade, esperava_encontrar, tolerancia_relativa, _origem }`. É lida **só** pela tool MCP `execute_gabarito` (execução do gabarito) e pelo passo de conferência — **nunca** por quem monta o prompt do avaliador.
 
-> **Não persista valor de referência estático.** A face secreta **não** carrega nenhum número de resposta (ex.: `_resultado_referencia`). A verdade é sempre a `gabarito_sql` re-executada ao vivo pelo `golden-runner`; um valor congelado no arquivo (a) envelhece com a atualização retroativa do BigQuery e (b) vira âncora de viés bem ao lado da SQL que o `golden-runner` lê. A validação do Passo 5.5 continua existindo, mas é só sanity-check em tempo de geração — o número observado **não** é gravado.
+> **Não persista valor de referência estático.** A face secreta **não** carrega nenhum número de resposta (ex.: `_resultado_referencia`). A verdade é sempre a `gabarito_sql` re-executada ao vivo pela tool `execute_gabarito`; um valor congelado no arquivo (a) envelhece com a atualização retroativa do BigQuery e (b) vira âncora de viés bem ao lado da SQL que `execute_gabarito` lê. A validação do Passo 5.5 continua existindo, mas é só sanity-check em tempo de geração — o número observado **não** é gravado.
 
 A divisão por `id` precisa bater exatamente: todo `id` em `public` tem o mesmo `id` em `secret`, sem gaps. Você gera cada pergunta com todos os campos juntos (Passo 5) e **separa por campo** só na hora de gravar (Passo 6).
 
@@ -200,7 +200,7 @@ Regras:
 - **IDs sem gaps**: atribua os `id` sequenciais **depois** dos descartes (começando em `start_id`; em `MODE=append`, continue após o maior id de `existing` e não reordene `existing`).
 - **`bq_local` indisponível** (não carregou): não dá para validar — grave a `gabarito_sql` mesmo assim, **não** descarte por isso, e registre `bq_local` em `mcps_indisponiveis`.
 
-> Validar **não** congela o número: a validação é só prova de que a query roda hoje, e o valor observado **não** é persistido. A verdade continua sendo a `gabarito_sql` re-executada a cada avaliação (é o que absorve a atualização retroativa do BigQuery) — gravar um número estático ao lado da SQL viraria âncora de viés para o `golden-runner`.
+> Validar **não** congela o número: a validação é só prova de que a query roda hoje, e o valor observado **não** é persistido. A verdade continua sendo a `gabarito_sql` re-executada a cada avaliação (é o que absorve a atualização retroativa do BigQuery) — gravar um número estático ao lado da SQL viraria âncora de viés para quem executa o gabarito (`execute_gabarito`).
 
 ## Passo 6 — Gravar as duas faces
 

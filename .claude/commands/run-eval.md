@@ -8,7 +8,7 @@ Você (Claude principal) é o orquestrador. Sua única responsabilidade neste co
 
 Se `kb.md` ou as faces de perguntas não existem, este command **não constrói** — apenas aponta para `/create-kb`.
 
-> **Isolamento do gabarito (a razão de ser deste fluxo).** As perguntas vivem em **duas faces** (Invariante #1 do CLAUDE.md): a **pública** (`questions.public.json` — `id`+`pergunta`) e a **secreta** (`questions.secret.json` — `gabarito_sql`+unidade+esperava+tolerância). **Você (orquestrador) lê SÓ a face pública.** A face secreta é lida exclusivamente pelo subagente `golden-runner`, que executa o gabarito e nunca monta prompt de avaliador. Por isso a ordem importa: você dispara os avaliadores a partir da face pública **antes** de qualquer gabarito existir no seu contexto — assim a fórmula da resposta é fisicamente incapaz de vazar para o prompt do candidato.
+> **Isolamento do gabarito (a razão de ser deste fluxo).** As perguntas vivem em **duas faces** (Invariante #1 do CLAUDE.md): a **pública** (`questions.public.json` — `id`+`pergunta`) e a **secreta** (`questions.secret.json` — `gabarito_sql`+unidade+esperava+tolerância). **Você (orquestrador) lê SÓ a face pública.** A face secreta é lida exclusivamente pela tool MCP `execute_gabarito` (servidor `bq_local`), que executa o gabarito server-side e nunca monta prompt de avaliador. Por isso a ordem importa: você dispara os avaliadores a partir da face pública **antes** de qualquer gabarito existir no seu contexto — assim a fórmula da resposta é fisicamente incapaz de vazar para o prompt do candidato.
 
 ## Passo 0 — Validar `<kb>` + flags
 
@@ -52,7 +52,7 @@ Sem sync de repos. Sem AskUserQuestion. Sem agents de build. Este command é del
 
    > **Isolamento — passe só o caminho da cópia.** Ao avaliador vai **apenas** `KB_FILE` (o caminho em scratch). **NUNCA** passe `KB_DIR`, o slug `<kb>`, nem qualquer caminho sob `knowledge-bases/`. **Isso inclui o próprio `KB_FILE`: o slug não pode aparecer em nenhuma parte do caminho — nem no nome do diretório de scratch, nem no do arquivo.** É isso que impede o avaliador de **localizar** a face secreta (`questions.secret.json`), que permanece só no `KB_DIR`.
 
-2. Leia **somente** `<PUBLIC_PATH>` e parseie. Esperado: array de objetos `{ id (number), pergunta (string) }`. Guarde como `PERGUNTAS`. **Não leia `<SECRET_PATH>`** — ela não entra no seu contexto neste passo nem em nenhum momento da montagem dos prompts. Quem a lê é o `golden-runner` (Passo 5).
+2. Leia **somente** `<PUBLIC_PATH>` e parseie. Esperado: array de objetos `{ id (number), pergunta (string) }`. Guarde como `PERGUNTAS`. **Não leia `<SECRET_PATH>`** — ela não entra no seu contexto neste passo nem em nenhum momento da montagem dos prompts. Quem a lê é a tool `execute_gabarito` (Passo 5).
 
 ## Passo 3 — Disparar N kb-evaluator em paralelo (só com a face pública)
 
@@ -91,41 +91,42 @@ Para cada resposta:
 4. Se falhar, registre `parse_error: true`, `_raw_output: "<truncado>"`, siga.
 5. Se OK, capture: `encontrada`, `valor`, `unidade`, `confianca`, `confianca_score`, `explicacao`, `sql_executado`, `bytes_processed`, `job_id`, `kb_linhas_lidas`, `kb_ultima_linha`. Sinalize `parse_lenient: true` quando precisou de strip.
 
-## Passo 5 — Estabelecer a verdade via `golden-runner` (depois que os avaliadores já responderam)
+## Passo 5 — Estabelecer a verdade via `execute_gabarito` (depois que os avaliadores já responderam)
 
-A verdade de cada pergunta **não é estática** — é o resultado de rodar a `gabarito_sql` **agora**, contra o BigQuery ao vivo. Isso absorve atualização retroativa dos dados: o número certo de ontem pode não ser o de hoje, e o gabarito acompanha automaticamente. **E o gabarito é executado por um ator isolado** (`golden-runner`), não por você — você nunca lê a `gabarito_sql`.
+A verdade de cada pergunta **não é estática** — é o resultado de rodar a `gabarito_sql` **agora**, contra o BigQuery ao vivo. Isso absorve atualização retroativa dos dados: o número certo de ontem pode não ser o de hoje, e o gabarito acompanha automaticamente. **E o gabarito é executado por um ator isolado** — a tool MCP `execute_gabarito` (servidor `bq_local`), que lê a face secreta server-side —, não por você: você nunca lê a `gabarito_sql`.
 
-Para **cada** item de `PERGUNTAS`, invoque `Agent` com:
+A tool chega como **deferred**. Carregue-a uma vez antes de usar:
+```
+ToolSearch(query="select:mcp__bq_local__execute_gabarito", max_results=1)
+```
 
-- `subagent_type`: `golden-runner`
-- `description`: `"Gabarito #<id>"`
-- `prompt`:
-  ```
-  KB_DIR: <KB_DIR>
-  QUESTION_ID: <id>
-  ```
+Para **cada** item de `PERGUNTAS`, chame `mcp__bq_local__execute_gabarito` com os parâmetros:
+```
+kb_dir: <KB_DIR>
+question_id: <id>
+```
 
 ### Regras críticas
 
 - **Todas as N chamadas em uma única mensagem** (paralelo), igual aos avaliadores.
-- **Só dispare os `golden-runner` depois de coletar as respostas dos avaliadores (Passo 4).** A ordem é o que garante o isolamento: quando o gabarito entra no seu contexto (como retorno do `golden-runner`), os prompts dos avaliadores já foram enviados e respondidos — não há mais onde vazar.
-- Você **não** monta a SQL nem a passa no prompt: passa só `KB_DIR` + `id`. O `golden-runner` lê a face secreta sozinho.
+- **Só chame `execute_gabarito` depois de coletar as respostas dos avaliadores (Passo 4).** A ordem é o que garante o isolamento: quando o gabarito entra no seu contexto (como retorno da tool), os prompts dos avaliadores já foram enviados e respondidos — não há mais onde vazar.
+- Você **não** monta a SQL nem a passa: passa só `kb_dir` + `question_id`. A tool lê a face secreta sozinha, dentro do processo MCP.
 
-Colete de cada `golden-runner` (parse tolerante igual ao Passo 4): `id`, `esperava_encontrar`, `gabarito_sql`, `resposta_esperada_unidade`, `tolerancia_relativa`, `valor_gabarito`, `gabarito_job_id`, `gabarito_bytes`, `gabarito_ok`. Esses campos são a sua **única** fonte de verdade e de parâmetros de tolerância/unidade — você não relê a face secreta.
+Colete de cada retorno de `execute_gabarito`: `id`, `esperava_encontrar`, `gabarito_sql`, `resposta_esperada_unidade`, `tolerancia_relativa`, `valor_gabarito`, `gabarito_job_id`, `gabarito_bytes`, `gabarito_ok`. Esses campos são a sua **única** fonte de verdade e de parâmetros de tolerância/unidade — você não relê a face secreta.
 
-> **Anti-alucinação do orquestrador (CRÍTICO).** Você **NUNCA** reescreve, "corrige", otimiza ou regenera a `gabarito_sql` (você nem a montou — veio do `golden-runner`). `valor_gabarito` vem **exclusivamente** do retorno do `golden-runner`; sem execução real → `gabarito_ok = false`/`null`. Se um `golden-runner` falhar, **não conserte a query nesta run**: a pergunta vira `status = "erro_gabarito"` na conferência — não é culpa do candidato.
+> **Anti-alucinação do orquestrador (CRÍTICO).** Você **NUNCA** reescreve, "corrige", otimiza ou regenera a `gabarito_sql` (você nem a montou — veio da tool). `valor_gabarito` vem **exclusivamente** do retorno de `execute_gabarito`; sem execução real → `gabarito_ok = false`/`null`. Se `execute_gabarito` falhar, **não conserte a query nesta run**: a pergunta vira `status = "erro_gabarito"` na conferência — não é culpa do candidato.
 
 ## Passo 6 — Conferência (scoring canônico)
 
 > Este é o **scoring canônico do projeto**. O `/create-kb` (Passo de avaliação champion-vs-candidate) aplica **exatamente estas mesmas regras** — referencie este passo, não duplique a lógica.
 
-A conferência recebe, por pergunta, apenas: **a resposta do avaliador** (Passo 4) + **o resultado do `golden-runner`** (Passo 5). Não há nenhum outro caminho de informação. Para cada pergunta:
+A conferência recebe, por pergunta, apenas: **a resposta do avaliador** (Passo 4) + **o resultado de `execute_gabarito`** (Passo 5). Não há nenhum outro caminho de informação. Para cada pergunta:
 
 ### 6.0 `valor_referencia` (precede tudo)
 
 Define a verdade contra a qual o candidato será comparado:
 
-- **`esperava_encontrar == true` e `gabarito_ok == false`** (do `golden-runner`): a verdade não pôde ser estabelecida nesta run → `status = "erro_gabarito"`. **Pule 6.1–6.5.** Registre `valor_referencia = null`, `delta_absoluto = null`, `delta_relativo = null`, `dentro_tolerancia = false`. Não é culpa do candidato — é o benchmark que quebrou.
+- **`esperava_encontrar == true` e `gabarito_ok == false`** (de `execute_gabarito`): a verdade não pôde ser estabelecida nesta run → `status = "erro_gabarito"`. **Pule 6.1–6.5.** Registre `valor_referencia = null`, `delta_absoluto = null`, `delta_relativo = null`, `dentro_tolerancia = false`. Não é culpa do candidato — é o benchmark que quebrou.
 - **`esperava_encontrar == true` e `gabarito_ok == true`**: `valor_referencia = valor_gabarito`. Siga para 6.1.
 - **`esperava_encontrar == false`** (`gabarito_ok == null`): sem verdade numérica; `valor_referencia = null` (a avaliação é só sobre `encontrada`, ver 6.1).
 
@@ -136,14 +137,14 @@ Define a verdade contra a qual o candidato será comparado:
   - Subagente retornou `encontrada: true` → **reprovado** (alucinou).
 
 ### 6.2 `unidade_ok`
-- Compare `unidade_obtida` (avaliador) com `resposta_esperada_unidade` (do `golden-runner`). Match case-insensitive. Tolere `"count"` ≡ `""` ≡ `"#"`. Moedas estrito (`"USD"` ≠ `"BRL"`).
+- Compare `unidade_obtida` (avaliador) com `resposta_esperada_unidade` (de `execute_gabarito`). Match case-insensitive. Tolere `"count"` ≡ `""` ≡ `"#"`. Moedas estrito (`"USD"` ≠ `"BRL"`).
 
 ### 6.3 Comparação numérica
 Quando `esperava_encontrar == true`, `encontrada_obtida == true` e o `status` **não** foi fixado em `"erro_gabarito"` (6.0):
 - `delta_absoluto = abs(valor_obtido - valor_referencia)`
 - Se `valor_referencia != 0`: `delta_relativo = delta_absoluto / abs(valor_referencia)`
 - Senão: `delta_relativo = (valor_obtido == 0) ? 0.0 : 1.0`
-- `dentro_tolerancia = delta_relativo <= tolerancia_relativa` (a `tolerancia_relativa` veio do `golden-runner`).
+- `dentro_tolerancia = delta_relativo <= tolerancia_relativa` (a `tolerancia_relativa` veio de `execute_gabarito`).
 
 ### 6.4 `execucao_ok`
 Aplique quando `encontrada_obtida == true`. `execucao_ok = true` se **todos**:
@@ -234,7 +235,7 @@ Defina `meta.mode = "quick"` se `QUICK_MODE`, senão `"full"`. Write em `<RESULT
 }
 ```
 
-Cada elemento de `results` segue este schema. O `valor_gabarito` e a `gabarito_sql` vêm do `golden-runner` (auditável depois via `gabarito_job_id`) e são gravados para auditoria — eles entram no seu contexto **só após** os avaliadores terem respondido:
+Cada elemento de `results` segue este schema. O `valor_gabarito` e a `gabarito_sql` vêm de `execute_gabarito` (auditável depois via `gabarito_job_id`) e são gravados para auditoria — eles entram no seu contexto **só após** os avaliadores terem respondido:
 
 ```json
 {
@@ -270,7 +271,7 @@ Cada elemento de `results` segue este schema. O `valor_gabarito` e a `gabarito_s
 }
 ```
 
-> A `pergunta` no `results` vem da face pública. Os campos de gabarito vêm do `golden-runner`. Em `status == "erro_gabarito"`: `gabarito_ok = false`, `valor_gabarito = null`, e os campos do candidato ainda são preenchidos com o que ele retornou — mas `delta_*` ficam `null` e `dentro_tolerancia = false`.
+> A `pergunta` no `results` vem da face pública. Os campos de gabarito vêm de `execute_gabarito`. Em `status == "erro_gabarito"`: `gabarito_ok = false`, `valor_gabarito = null`, e os campos do candidato ainda são preenchidos com o que ele retornou — mas `delta_*` ficam `null` e `dentro_tolerancia = false`.
 
 > Os valores no schema acima são **exemplos ilustrativos** (como `valor_gabarito: 100000` e o `kb_ultima_linha` de exemplo), não fixos. Em especial, **`kb_linhas_lidas` e `kb_ultima_linha` são dinâmicos**: são a contagem real de linhas e a última linha não-vazia que o avaliador leu naquela run — **variam por KB e por versão**. O orquestrador compara `kb_linhas_lidas` com `KB_LINHAS` (`wc -l`) e `kb_ultima_linha` com `KB_ULTIMA_LINHA` (marcador de EOF do `kb.md` da própria run); se uma KB crescer/encolher, os dois lados acompanham juntos. Nada é hardcoded — divergência de linhas sinaliza leitura parcial; divergência do marcador sinaliza que a leitura não chegou ao fim. Os `job_id`/`gabarito_job_id` de exemplo são UUIDs (formato real do BigQuery Python client).
 
@@ -407,11 +408,11 @@ Motivo curto (em ordem de prioridade):
 
 ## Regras invioláveis
 
-- **Você lê SÓ a face pública**: o orquestrador nunca abre `questions.secret.json`. A `gabarito_sql` e o `valor_gabarito` chegam exclusivamente como **retorno do `golden-runner`**, e só depois que os avaliadores já responderam. Ler a face secreta no orquestrador recria o vazamento que a separação física existe para impedir.
-- **Ordem é isolamento**: avaliadores (Passo 3) **antes** dos `golden-runner` (Passo 5). Em nenhum momento da montagem do prompt do avaliador o seu contexto contém o gabarito.
+- **Você lê SÓ a face pública**: o orquestrador nunca abre `questions.secret.json`. A `gabarito_sql` e o `valor_gabarito` chegam exclusivamente como **retorno de `execute_gabarito`**, e só depois que os avaliadores já responderam. Ler a face secreta no orquestrador recria o vazamento que a separação física existe para impedir.
+- **Ordem é isolamento**: avaliadores (Passo 3) **antes** de `execute_gabarito` (Passo 5). Em nenhum momento da montagem do prompt do avaliador o seu contexto contém o gabarito.
 - **Não constrói nada**: se kb.md ou as faces estão ausentes, este command aponta para `/create-kb` e termina.
-- **kb-evaluator e golden-runner são sempre paralelos**: N tool_uses em uma única mensagem, cada grupo no seu turno.
-- **Gabarito é executado verbatim pelo `golden-runner`**: a `gabarito_sql` roda como está, nunca regenerada/corrigida na run, nunca incluída no prompt do `kb-evaluator`. Falha vira `erro_gabarito` (não reprovação). Determinismo é garantido por validação de prova (`gabarito_job_id`/`gabarito_bytes`), não por "quem executou".
+- **kb-evaluator e `execute_gabarito` são sempre paralelos**: N tool_uses em uma única mensagem, cada grupo no seu turno.
+- **Gabarito é executado verbatim por `execute_gabarito`**: a `gabarito_sql` roda como está, nunca regenerada/corrigida na run, nunca incluída no prompt do `kb-evaluator`. Falha vira `erro_gabarito` (não reprovação). Determinismo é garantido por validação de prova (`gabarito_job_id`/`gabarito_bytes`) + execução por código (não-LLM, não alucina), não por "quem executou".
 - **Verdade é dinâmica**: a referência de comparação é `valor_gabarito` (resultado da run atual), não um número fixo. Dois runs com o mesmo `questions_hash` podem ter `valor_gabarito` diferente (drift de dados) — e isso é correto: o `status` por pergunta permanece estável apesar do drift.
 - **Conferência é o scoring canônico**: o `/create-kb` referencia o Passo 6, não reimplementa.
 - **Nunca ajuste manualmente as respostas dos subagentes**: registre o que retornaram.
