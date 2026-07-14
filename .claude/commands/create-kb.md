@@ -8,7 +8,7 @@ Você (Claude principal) é o orquestrador. Sua missão é construir ou atualiza
 
 **Princípio fundamental**: `kb-builder` e `question-creator` rodam em paralelo, cada um chamando os MCPs Looker/Metabase **independente**. O `question-creator` **NÃO** lê o `kb.md` gerado pelo `kb-builder` — isso evita "alvo móvel" (KB e perguntas que evoluem juntas, mascarando se a melhoria é real).
 
-> **Isolamento do gabarito.** As perguntas vivem em **duas faces** (Invariante #1 do CLAUDE.md): pública (`questions.public.json` — `id`+`pergunta`) e secreta (`questions.secret.json` — gabarito + unidade + esperava + tolerância). Na avaliação champion-vs-candidate, **você lê só a face pública** para montar os prompts; a verdade é estabelecida por subagentes `golden-runner` isolados, **depois** que os avaliadores já responderam. O orquestrador nunca abre a face secreta.
+> **Isolamento do gabarito.** As perguntas vivem em **duas faces** (Invariante #1 do CLAUDE.md): pública (`questions.public.json` — `id`+`pergunta`) e secreta (`questions.secret.json` — gabarito + unidade + esperava + tolerância). Na avaliação champion-vs-candidate, **você lê só a face pública** para montar os prompts; a verdade é estabelecida pela tool MCP `execute_gabarito` (isolada, server-side), **depois** que os avaliadores já responderam. O orquestrador nunca abre a face secreta.
 
 ## Passo 0 — Sync de repos GitHub
 
@@ -222,7 +222,7 @@ Fim do command. Não roda eval automaticamente.
 
 ## Passo 6 — Modo candidate: avaliar ambos (TARGET_PATH == kb-candidate.md)
 
-> Mesmo isolamento do `/run-eval`: avaliadores a partir da face pública **primeiro**, `golden-runner` **depois**. O gabarito (computado **uma vez**) julga champion e candidate contra o **mesmo** `valor_gabarito` — é isso que torna o A/B justo.
+> Mesmo isolamento do `/run-eval`: avaliadores a partir da face pública **primeiro**, `execute_gabarito` **depois**. O gabarito (computado **uma vez**) julga champion e candidate contra o **mesmo** `valor_gabarito` — é isso que torna o A/B justo.
 
 ### 6a. Ler face pública + preparar cópias isoladas das duas KBs (NUNCA a secreta)
 
@@ -262,30 +262,25 @@ Responda apenas com o objeto JSON especificado na sua definição. Sem texto ant
 
 Para cada uma das 2N respostas: strip de markdown (` ```json `, ` ``` `); extrair entre primeiro `{` e último `}`; `JSON.parse`; falhou → `parse_error: true`; OK → capture `encontrada`, `valor`, `unidade`, `confianca`, `confianca_score`, `explicacao`, `sql_executado`, `bytes_processed`, `job_id`, `kb_linhas_lidas`, `kb_ultima_linha`.
 
-### 6d. Estabelecer a verdade via `golden-runner` (depois dos avaliadores; uma vez, vale p/ os dois lados)
+### 6d. Estabelecer a verdade via `execute_gabarito` (depois dos avaliadores; uma vez, vale p/ os dois lados)
 
-Em **uma única mensagem**, dispare `N` `Agent(subagent_type="golden-runner")` — **um por pergunta** (não por lado; a verdade independe da KB):
+A tool MCP chega como **deferred**; carregue-a uma vez: `ToolSearch(query="select:mcp__bq_local__execute_gabarito", max_results=1)`.
+
+Em **uma única mensagem**, chame `N` vezes `mcp__bq_local__execute_gabarito` — **uma por pergunta** (não por lado; a verdade independe da KB):
 
 ```
-Agent(
-  subagent_type="golden-runner",
-  description="Gabarito #<id>",
-  prompt="""
-KB_DIR: <KB_DIR>
-QUESTION_ID: <id>
-"""
-)
+mcp__bq_local__execute_gabarito(kb_dir="<KB_DIR>", question_id=<id>)
 ```
 
-Colete de cada um: `id`, `esperava_encontrar`, `gabarito_sql`, `resposta_esperada_unidade`, `tolerancia_relativa`, `valor_gabarito`, `gabarito_job_id`, `gabarito_bytes`, `gabarito_ok` — **mesma anti-alucinação do `/run-eval` Passo 5**: você nunca reescreve a SQL (nem a montou), `valor_gabarito` vem só do retorno, falha vira `erro_gabarito`. O mesmo `valor_gabarito` julga **os dois** lados.
+Colete de cada retorno: `id`, `esperava_encontrar`, `gabarito_sql`, `resposta_esperada_unidade`, `tolerancia_relativa`, `valor_gabarito`, `gabarito_job_id`, `gabarito_bytes`, `gabarito_ok` — **mesma anti-alucinação do `/run-eval` Passo 5**: você nunca reescreve a SQL (nem a montou), `valor_gabarito` vem só do retorno, falha vira `erro_gabarito`. O mesmo `valor_gabarito` julga **os dois** lados.
 
 ### 6e. Conferência (scoring canônico do `/run-eval` Passo 6)
 
-Para cada pergunta, aplique **as regras do `/run-eval` Passo 6** (6.0–6.5) **duas vezes** — uma com a resposta do champion, outra com a do candidate — sempre contra o **mesmo** resultado do `golden-runner`:
+Para cada pergunta, aplique **as regras do `/run-eval` Passo 6** (6.0–6.5) **duas vezes** — uma com a resposta do champion, outra com a do candidate — sempre contra o **mesmo** resultado de `execute_gabarito`:
 
-- `valor_referencia` = `valor_gabarito` do `golden-runner` (ou `null` se `gabarito_ok == false`).
+- `valor_referencia` = `valor_gabarito` de `execute_gabarito` (ou `null` se `gabarito_ok == false`).
 - Se `esperava_encontrar == true` e `gabarito_ok == false`: `status = "erro_gabarito"` para **ambos** os lados (a verdade não existe nesta run) — `delta_* = null`, `dentro_tolerancia = false`.
-- `encontrada_ok`, `unidade_ok` (usando `resposta_esperada_unidade` do `golden-runner`), comparação numérica (`tolerancia_relativa` do `golden-runner`), `execucao_ok` e `status` exatamente como no Passo 6 do `/run-eval`.
+- `encontrada_ok`, `unidade_ok` (usando `resposta_esperada_unidade` de `execute_gabarito`), comparação numérica (`tolerancia_relativa` de `execute_gabarito`), `execucao_ok` e `status` exatamente como no Passo 6 do `/run-eval`.
 
 Não reimplemente as fórmulas aqui — o Passo 6 do `/run-eval` é a fonte canônica.
 
@@ -305,7 +300,7 @@ Grave 2 arquivos no formato `{ meta, results }` — **mesmo bloco `meta` do Pass
 - `<RESULTS_DIR>/<ts>.champion.json` — `results` = N do champion; `meta.mode = "champion"`; hashes do champion; `meta.run_id = "<ts>"`.
 - `<RESULTS_DIR>/<ts>.candidate.json` — `results` = N do candidate; `meta.mode = "candidate"`; hashes do candidate; `meta.run_id = "<ts>"`.
 
-Cada elemento de `results` segue o **schema do Passo 7.4 do `/run-eval`** (com os campos de gabarito vindos do `golden-runner`). O `valor_gabarito` é idêntico nos dois arquivos (mesma verdade da run). A `pergunta` vem da face pública.
+Cada elemento de `results` segue o **schema do Passo 7.4 do `/run-eval`** (com os campos de gabarito vindos de `execute_gabarito`). O `valor_gabarito` é idêntico nos dois arquivos (mesma verdade da run). A `pergunta` vem da face pública.
 
 > **Não** appende ao `_index.json` aqui. Champion/candidate são *staging* de A/B, não pontos da linha do tempo. A entrada canônica é appendada **só na consolidação** (Passo 8).
 
@@ -431,12 +426,12 @@ Se `--regenerate-questions` foi usado, imprima também:
 ## Regras invioláveis
 
 - **Você é o único que conversa com o usuário** — sub-agents não fazem AskUserQuestion.
-- **Você lê SÓ a face pública**: o orquestrador nunca abre `questions.secret.json`. O gabarito chega como retorno do `golden-runner`, e só depois que os avaliadores responderam (Passo 6b antes do 6d). Ler a face secreta no orquestrador recria o vazamento que a separação física existe para impedir.
+- **Você lê SÓ a face pública**: o orquestrador nunca abre `questions.secret.json`. O gabarito chega como retorno de `execute_gabarito`, e só depois que os avaliadores responderam (Passo 6b antes do 6d). Ler a face secreta no orquestrador recria o vazamento que a separação física existe para impedir.
 - **Inputs upfront**: todas as perguntas nos Passos 1a/2/7c, antes de invocar agents (exceto a decisão de promoção, que vem depois do eval).
 - **Pulo binário de question-creator**: faces existem E sem `--regenerate-questions` → não invoca question-creator (mantém alvo fixo).
 - **TARGET_PATH é binário**: `kb.md` para KB nova, `kb-candidate.md` para KB existente. Sem exceções.
-- **Agents em paralelo**: kb-builder + question-creator no mesmo turno; 2N kb-evaluator no mesmo turno; N golden-runner no mesmo turno.
-- **Gabarito é computado uma vez pelo `golden-runner`, verbatim, e compartilhado**: nunca regenerado, nunca no prompt do candidato; o mesmo `valor_gabarito` julga champion e candidate. Falha vira `erro_gabarito` nos dois lados — não vira regressão/melhoria.
+- **Agents/tools em paralelo**: kb-builder + question-creator no mesmo turno; 2N kb-evaluator no mesmo turno; N chamadas de `execute_gabarito` no mesmo turno.
+- **Gabarito é computado uma vez por `execute_gabarito`, verbatim, e compartilhado**: nunca regenerado, nunca no prompt do candidato; o mesmo `valor_gabarito` julga champion e candidate. Falha vira `erro_gabarito` nos dois lados — não vira regressão/melhoria.
 - **Conferência usa o scoring canônico do `/run-eval` Passo 6**: não reimplemente as fórmulas.
 - **Nunca ajuste manualmente as respostas dos subagentes**: registre o que retornaram.
 - **Nunca leia kb.md no orquestrador para tomar decisões**: no 6a você só faz `cp` das duas KBs para scratch e passa os caminhos ao kb-evaluator (nunca embute o conteúdo, nunca inspeciona para julgar). A decisão de promoção é baseada em diff de resultados, não em diff de markdown.
