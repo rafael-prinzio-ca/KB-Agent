@@ -21,3 +21,7 @@ repos/
 
 # Local settings com caminhos espec�ficos da m�quina
 .claude/settings.local.json
+
+# Bytecode Python (cache regenerável — py_compile / import do MCP)
+__pycache__/
+*.pyc
