@@ -65,6 +65,9 @@ mcp = FastMCP("bq-local")
 
 _SELECT_RE = re.compile(r"^\s*(--[^\n]*\n|/\*.*?\*/\s*)*\s*(with|select)\b", re.IGNORECASE | re.DOTALL)
 
+# Extrai blocos de código ```sql ... ``` de um markdown (usado pela varredura validate_kb_queries).
+_SQL_FENCE_RE = re.compile(r"```sql\s*\n(.*?)```", re.IGNORECASE | re.DOTALL)
+
 
 def _client(project_id: str) -> bigquery.Client:
     _log.info(f"_client(project_id={project_id!r}) — creating bigquery.Client...")
@@ -96,20 +99,34 @@ def _rows_to_list(row_iterator) -> list[dict[str, Any]]:
     return out
 
 
-def _run_readonly(project_id: str, query: str) -> dict[str, Any]:
+def _run_readonly(project_id: str, query: str, dry_run: bool = False,
+                  query_parameters: list[Any] | None = None) -> dict[str, Any]:
     """Execução read-only central — compartilhada por execute_sql_readonly e execute_gabarito.
 
     Impõe SELECT/WITH-only como rede de segurança (o BQ também impõe via flag DML,
     mas o guard local previne escrita acidental).
+
+    dry_run=True valida a query (compilação + existência de tabelas/colunas) SEM executar
+    nem escanear dados — usado pela varredura validate_kb_queries. query_parameters permite
+    declarar parâmetros nomeados (ex.: @inicio/@fim) para validar queries parametrizadas.
+    Ambos os defaults preservam o comportamento atual de execute_sql_readonly/execute_gabarito.
     """
     if not _SELECT_RE.match(query):
         raise ValueError("Only SELECT/WITH queries are allowed in execute_sql_readonly.")
 
     client = _client(project_id)
-    job_config = bigquery.QueryJobConfig(use_legacy_sql=False, dry_run=False)
+    job_config = bigquery.QueryJobConfig(
+        use_legacy_sql=False,
+        dry_run=dry_run,
+        query_parameters=query_parameters or [],
+    )
     job = client.query(query, job_config=job_config)
-    rows = list(job.result())
-    schema_fields = [{"name": f.name, "type": f.field_type, "mode": f.mode} for f in (job.schema or [])]
+    # dry_run não executa: não há linhas a buscar (só compila e devolve stats/schema).
+    rows = [] if dry_run else list(job.result())
+    try:
+        schema_fields = [{"name": f.name, "type": f.field_type, "mode": f.mode} for f in (job.schema or [])]
+    except Exception:
+        schema_fields = []
     return {
         "jobComplete": True,
         "queryId": job.job_id,
@@ -299,6 +316,68 @@ def execute_gabarito(kb_dir: str, question_id: int) -> dict[str, Any]:
         "resposta_esperada_unidade": unidade, "tolerancia_relativa": tol,
         "valor_gabarito": num, "gabarito_job_id": job_id, "gabarito_bytes": gbytes,
         "gabarito_ok": True,
+    }
+
+
+@mcp.tool()
+def validate_kb_queries(kb_file: str, dry_run: bool = True) -> dict[str, Any]:
+    """Varredura determinística das queries de um kb.md (read-only, dry-run por padrão).
+
+    Extrai cada bloco ```sql do arquivo e valida cada um independentemente, devolvendo
+    um relatório 3-estado por bloco:
+      - "validada"  : é query SELECT/WITH e o dry-run passou (compila; tabelas/colunas existem)
+      - "falhou"    : é query mas o dry-run deu erro (ex.: coluna renomeada — sinal de drift)
+      - "nao_query" : o bloco ```sql não é SELECT/WITH (fragmento/expressão) — viola a
+                      convenção da KB nova (```sql = 1 query completa executável)
+
+    Convenção validada: queries de período usam parâmetros nomeados @inicio/@fim (DATE),
+    declarados aqui com valores de teste. dry_run=True NÃO executa (não escaneia bytes,
+    não altera nada). É return-only: NÃO escreve no kb.md (o orquestrador persiste o
+    relatório como sidecar). NÃO lê a face secreta.
+    """
+    _log.info(f"validate_kb_queries(kb_file={kb_file!r}, dry_run={dry_run})")
+    try:
+        text = Path(kb_file).read_text(encoding="utf-8")
+    except Exception as exc:
+        return {"kb_file": kb_file, "error": f"não abriu kb_file: {exc}",
+                "total": 0, "validadas": 0, "falhas": 0, "violacoes": 0, "blocks": []}
+
+    default_project = os.environ.get("BIGQUERY_PROJECT_ID", "contaazul-ssbi")
+    # Parâmetros de teste da convenção @inicio/@fim (valores irrelevantes em dry-run —
+    # não há scan; servem só para a query parametrizada compilar).
+    test_params = [
+        bigquery.ScalarQueryParameter("inicio", "DATE", "2026-01-01"),
+        bigquery.ScalarQueryParameter("fim", "DATE", "2026-01-31"),
+    ]
+
+    blocks: list[dict[str, Any]] = []
+    for idx, m in enumerate(_SQL_FENCE_RE.finditer(text), start=1):
+        sql = m.group(1).strip()
+        entry: dict[str, Any] = {"index": idx, "line_start": text[: m.start()].count("\n") + 1}
+        if not _SELECT_RE.match(sql):
+            entry.update(status="nao_query",
+                         error="bloco ```sql não é query SELECT/WITH (fragmento/expressão — viola a convenção)")
+            blocks.append(entry)
+            continue
+        project = _project_of_sql(sql, default_project)
+        entry["project"] = project
+        try:
+            res = _run_readonly(project, sql, dry_run=dry_run, query_parameters=test_params)
+            entry.update(status="validada", job_id=res.get("queryId"),
+                         bytes=int(res.get("totalBytesProcessed") or 0),
+                         colunas=len(res.get("schema", {}).get("fields", [])))
+        except Exception as exc:
+            entry.update(status="falhou", error=str(exc)[:300])
+        blocks.append(entry)
+
+    return {
+        "kb_file": kb_file,
+        "dry_run": dry_run,
+        "total": len(blocks),
+        "validadas": sum(1 for b in blocks if b.get("status") == "validada"),
+        "falhas": sum(1 for b in blocks if b.get("status") == "falhou"),
+        "violacoes": sum(1 for b in blocks if b.get("status") == "nao_query"),
+        "blocks": blocks,
     }
 
 
