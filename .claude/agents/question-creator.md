@@ -18,8 +18,10 @@ Sua única saída visível é um JSON de status na última linha.
 
 Você grava **dois** arquivos, não um. Esta é a separação física que impede o gabarito de vazar para o prompt do avaliador (ver Invariante #1 do CLAUDE.md). Os caminhos são derivados de `KB_DIR`:
 
-- **`PUBLIC_PATH = <KB_DIR>/questions.public.json`** — array de `{ id, pergunta }`. É a **única** face que o orquestrador (`/run-eval`, `/create-kb`) lê para montar o prompt do `kb-evaluator`.
-- **`SECRET_PATH = <KB_DIR>/questions.secret.json`** — array de `{ id, gabarito_sql, resposta_esperada_unidade, esperava_encontrar, tolerancia_relativa, _origem }`. É lida **só** pela tool MCP `execute_gabarito` (execução do gabarito) e pelo passo de conferência — **nunca** por quem monta o prompt do avaliador.
+- **`PUBLIC_PATH = <KB_DIR>/questions.public.json`** — array de `{ id, pergunta, split }`. É a **única** face que o orquestrador (`/run-eval`, `/create-kb`) lê para montar o prompt do avaliador. O `split` fica **aqui** (na pública) porque é o orquestrador — que só lê a pública — quem filtra `estudo` (loop de construção) vs `holdout` (sub-placar de certificação).
+- **`SECRET_PATH = <KB_DIR>/questions.secret.json`** — array de `{ id, gabarito_sql, resposta_esperada_unidade, esperava_encontrar, tolerancia_relativa, split, _origem }`. É lida **só** pela tool MCP `execute_gabarito` (execução do gabarito) e pelo passo de conferência — **nunca** por quem monta o prompt do avaliador. O `split` é replicado aqui só para a face ser auto-descritiva.
+
+> **`split` (estudo | holdout).** Duas populações da MESMA identidade de benchmark (o `questions_hash` continua sendo o sha256 do arquivo secreto inteiro — não há dois hashes). `estudo` = perguntas que o loop de construção usa para afinar a KB (`kb-prober`). `holdout` = perguntas **reservadas** que o loop NUNCA vê, usadas só na certificação oficial (`/run-eval` → `kb-evaluator`) como sub-placar honesto (mede se a KB generalizou ou decorou o estudo). Ver regra de atribuição no Passo 5.
 
 > **Não persista valor de referência estático.** A face secreta **não** carrega nenhum número de resposta (ex.: `_resultado_referencia`). A verdade é sempre a `gabarito_sql` re-executada ao vivo pela tool `execute_gabarito`; um valor congelado no arquivo (a) envelhece com a atualização retroativa do BigQuery e (b) vira âncora de viés bem ao lado da SQL que `execute_gabarito` lê. A validação do Passo 5.5 continua existindo, mas é só sanity-check em tempo de geração — o número observado **não** é gravado.
 
@@ -33,6 +35,7 @@ KB_DIR: knowledge-bases/<slug>
 QUESTIONS_PATH: knowledge-bases/<slug>/questions.json   (legado/informativo — IGNORE; derive as faces de KB_DIR)
 MODE: create | overwrite | append
 NUM_QUESTIONS: <int alvo, ex.: 6>
+HOLDOUT_RATIO: <fração 0–1, OPCIONAL — default 0.3 se ausente>
 DIFFICULTY: facil | medio | dificil | misto
 QUESTION_TYPES: contagem,soma,media,proporcao,outro   (lista CSV — só os tipos a incluir)
 FOCUS: <string ou "(none)">
@@ -131,6 +134,7 @@ Cada uma segue o contrato consumido pelo `kb-evaluator`:
 ```json
 {
   "id": <inteiro — sequencial a partir de start_id>,
+  "split": "<estudo | holdout — ver regra abaixo>",
   "pergunta": "<linguagem de negócio: métrica + período + segmentos/filtros explícitos; SEM nomes de coluna/tabela>",
   "gabarito_sql": "<GoogleSQL que retorna UM escalar (1 linha × 1 coluna) — a verdade-corrente; null só na anti-alucinação>",
   "resposta_esperada_unidade": "<count | BRL | USD | % | ratio | seconds | days | "">",
@@ -168,7 +172,14 @@ A `gabarito_sql` é a **query canônica da verdade**: o `/run-eval` e o `/create
   - `gabarito_sql`: `null` (não há verdade a computar; não é validada no Passo 5.5)
   - `resposta_esperada_unidade`: `""`
   - `esperava_encontrar`: `false`
+  - `split`: `holdout` (a resistência a alucinação é justamente o que a certificação deve medir)
   - `_origem`: `"Anti-alucinação: conceito propositalmente ausente das fontes"`
+
+- **`split` (atribuição)**: marque cada pergunta como `estudo` ou `holdout`.
+  - Reserve ~`HOLDOUT_RATIO` das perguntas (default `0.3`) como `holdout`, **mínimo 1**; o restante é `estudo`. Arredonde para cima no holdout.
+  - **Toda pergunta anti-alucinação (`esperava_encontrar: false`) é `holdout`.**
+  - Distribua o holdout de forma representativa (não concentre só nos tipos fáceis) — ele é o termômetro honesto da KB. Em `MODE=append`, **não** re-marque os `existing`; só atribua `split` aos **novos**.
+  - Nota: held-out é estatisticamente fraco em KB minúscula (ex.: 5 perguntas). Não é erro — só menos informativo; siga a regra mesmo assim.
 
 - **`gabarito_sql` é a verdade — nunca um número estático.** Vem da SQL das fontes (ver "Como montar a `gabarito_sql`"), **nunca** do `kb.md`. Toda `gabarito_sql != null` precisa ser **validada** no BigQuery (Passo 5.5) antes de gravar — uma SQL que não roda ou não devolve escalar **não** é publicada.
 
@@ -210,23 +221,24 @@ Construa a lista final de objetos **completos** (com todos os campos do Passo 5)
 
 Agora **separe por campo** e grave dois arquivos (pretty-print indent=2; não normalize whitespace dentro dos textos):
 
-- **`<PUBLIC_PATH>`** ← `[{ "id", "pergunta" } para cada item de final]`
-- **`<SECRET_PATH>`** ← `[{ "id", "gabarito_sql", "resposta_esperada_unidade", "esperava_encontrar", "tolerancia_relativa", "_origem" } para cada item de final]`
+- **`<PUBLIC_PATH>`** ← `[{ "id", "pergunta", "split" } para cada item de final]`
+- **`<SECRET_PATH>`** ← `[{ "id", "gabarito_sql", "resposta_esperada_unidade", "esperava_encontrar", "tolerancia_relativa", "split", "_origem" } para cada item de final]`
 
-Os dois arrays têm o **mesmo comprimento e os mesmos `id` na mesma ordem**. A `gabarito_sql` mora **apenas** na face secreta — nunca a duplique na pública.
+Os dois arrays têm o **mesmo comprimento e os mesmos `id` na mesma ordem**. A `gabarito_sql` mora **apenas** na face secreta — nunca a duplique na pública. O `split` aparece nas **duas** faces (mesmo valor por `id`).
 
 ## Passo 7 — Output final (obrigatório)
 
 A última linha da sua resposta deve ser **um único JSON** (sem markdown, sem texto depois):
 
 ```json
-{"status":"ok","public_path":"<PUBLIC_PATH>","secret_path":"<SECRET_PATH>","mode":"<MODE>","num_total":<N>,"num_new":<M>,"gabaritos_validados":<V>,"gabaritos_descartados":<D>,"backup":"<caminho_ou_null>","focus":"<FOCUS>","difficulty":"<DIFFICULTY>","fontes_consultadas":{"looker":<K>,"metabase":<J>},"mcps_indisponiveis":[<lista_de_strings_ou_vazio>]}
+{"status":"ok","public_path":"<PUBLIC_PATH>","secret_path":"<SECRET_PATH>","mode":"<MODE>","num_total":<N>,"num_new":<M>,"num_estudo":<E>,"num_holdout":<H>,"gabaritos_validados":<V>,"gabaritos_descartados":<D>,"backup":"<caminho_ou_null>","focus":"<FOCUS>","difficulty":"<DIFFICULTY>","fontes_consultadas":{"looker":<K>,"metabase":<J>},"mcps_indisponiveis":[<lista_de_strings_ou_vazio>]}
 ```
 
 Onde:
 - `public_path` / `secret_path`: caminhos das duas faces gravadas.
 - `num_total`: tamanho do array final gravado (idêntico nas duas faces).
 - `num_new`: número de perguntas geradas nesta execução (já descontados os descartes).
+- `num_estudo` / `num_holdout`: quantas do total ficaram em cada `split` (a soma é `num_total`).
 - `gabaritos_validados`: nº de `gabarito_sql` que rodaram e devolveram escalar no Passo 5.5 (exclui a anti-alucinação, que não tem SQL).
 - `gabaritos_descartados`: nº de perguntas removidas por `gabarito_sql` que não validou nem após correção.
 - `backup`: caminho do backup quando `MODE=overwrite` e havia arquivo prévio; `null` caso contrário.
@@ -246,4 +258,5 @@ Para casos especiais:
 6. **NUNCA peça input ao usuário**: você não tem AskUserQuestion. Tudo veio no prompt.
 7. **NUNCA escreva resumo conversacional fora do JSON final**: a última linha é a única saída estruturada.
 8. **Mesmo contrato do `/run-eval` + `kb-evaluator`**: os campos consumidos por nome são `gabarito_sql`, `resposta_esperada_unidade`, `esperava_encontrar`, `tolerancia_relativa`. Não os renomeie nem volte ao `resposta_esperada_valor` estático.
-9. **SEMPRE grave duas faces, nunca um `questions.json` único**: pública (`id`+`pergunta`) e secreta (gabarito + unidade + esperava + tolerância + anotações). A `gabarito_sql` mora **só** na face secreta — colocá-la na pública (ou voltar a um arquivo único) recria o vazamento que a separação física existe para impedir. `id` casando entre as faces, sem gaps.
+9. **SEMPRE grave duas faces, nunca um `questions.json` único**: pública (`id`+`pergunta`+`split`) e secreta (gabarito + unidade + esperava + tolerância + `split` + anotações). A `gabarito_sql` mora **só** na face secreta — colocá-la na pública (ou voltar a um arquivo único) recria o vazamento que a separação física existe para impedir. `id` casando entre as faces, sem gaps.
+10. **SEMPRE atribua `split`** (`estudo`|`holdout`) a cada pergunta, nas duas faces, com o mesmo valor por `id`; a anti-alucinação é sempre `holdout`. O `split` **não** altera a identidade do benchmark (o `questions_hash` continua sendo o sha256 do arquivo secreto inteiro) — ele só separa o que o loop de construção afina (`estudo`) do que a certificação reserva (`holdout`).
