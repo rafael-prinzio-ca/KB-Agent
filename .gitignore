@@ -1,6 +1,10 @@
 # Histórico de avaliações gerado por /run-eval (não versionado)
 knowledge-bases/*/results/
 
+# Staging do loop de construção (/create-kb): sidecars varredura-r*/loop-r* por-run
+# (derivados/diagnósticos, nunca no _index.json) — não versionados
+knowledge-bases/*/build-log/
+
 # Relatórios HTML gerados por /eval-report (derivados, regeneráveis)
 knowledge-bases/*/reports/
 
@@ -25,3 +29,6 @@ repos/
 # Bytecode Python (cache regenerável — py_compile / import do MCP)
 __pycache__/
 *.pyc
+
+# Diagramas/artefatos de apresentação gerados (derivados, não versionados)
+*.drawio
