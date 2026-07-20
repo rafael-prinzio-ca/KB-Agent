@@ -13,9 +13,9 @@ Você (Claude principal) é o orquestrador. Sua missão é construir ou atualiza
 ## Dois modos (fork por `KB_EXISTS`)
 
 - **Nascimento** (`KB_EXISTS == false`, escreve em `kb.md`): guiado + **loop test-driven**. Ementa (Passo 2.5) → build → varredura + loop com `kb-prober` sobre as perguntas `split=="estudo"` → checkpoint humano. A verdade nunca chega a quem escreve a KB; o conserto vem das **fontes** (Passo 5).
-- **Atualização** (`KB_EXISTS == true`, escreve em `kb-candidate.md`): **champion-vs-candidate** (Passo 6-8, como sempre). Antes do A/B: candidate = champion + **patch** do delta (não regenera) + delta-loop só nas perguntas novas (Passo 5.5). O held-out é o portão de regressão.
+- **Atualização** (`KB_EXISTS == true`, escreve em `kb-candidate.md`): **champion-vs-candidate** (Passo 6-8, como sempre). Antes do A/B: candidate = champion + **patch** do delta (não regenera) + delta-loop só nas perguntas novas (Passo 5.5). O portão de regressão cobre **toda pergunta pré-existente** (held-out + estudo antiga); o held-out segue como o número honesto de certificação.
 
-> **Papéis (não confundir):** quem faz **toda** avaliação **dentro do `/create-kb`** é o `kb-prober` — tanto no loop de construção (Passo 5/5.5) quanto no A/B champion-vs-candidate (Passo 6). O `kb-evaluator` é **exclusivo do `/run-eval`** (a certificação oficial, invocada por você) — **nunca** é disparado pelo `/create-kb`. `kb-builder`/`question-creator`/`kb-prober` **nunca** veem o gabarito.
+> **Papéis (não confundir):** dentro do `/create-kb`, o `kb-prober` faz a avaliação **do loop de afinação** (Passo 5/5.5) — é ele que devolve `lacunas` para dirigir o conserto. O **A/B champion-vs-candidate** (Passo 6) usa o `kb-evaluator` — o mesmo avaliador oficial do `/run-eval` —, porque a decisão de promoção deve usar o instrumento mais confiável e consistente com a certificação. Ou seja: **prober afina, evaluator julga.** `kb-builder`/`question-creator`/`kb-prober`/`kb-evaluator` **nunca** veem o gabarito.
 
 ## Passo 0 — Sync de repos GitHub
 
@@ -68,7 +68,8 @@ Status da KB "<kb>":
 Plano:
   kb-builder       → [build em kb.md (Nascimento) | patch em kb-candidate.md (Atualização)]
   question-creator → [executado | pulado (mantém faces atuais)]
-  kb-prober        → [loop de construção (Nascimento) | delta-loop + A/B champion-vs-candidate (Atualização)]
+  kb-prober        → [loop de construção (Nascimento) | delta-loop (Atualização)]
+  kb-evaluator     → [A/B champion-vs-candidate (Atualização) | certificação via /run-eval]
 ```
 
 > Se exatamente **uma** das faces existir (estado inconsistente, ex.: migração interrompida), trate como `FACES_EXIST = false` e force regeneração: marque `WILL_GENERATE_QUESTIONS = true` no Passo 2 e avise no resumo final que as faces foram regeneradas por estarem incompletas.
@@ -294,7 +295,7 @@ Só quando `TARGET_PATH == <CANDIDATE_PATH>` **e** o `question-creator` rodou em
 2. `mkdir -p <KB_DIR>/build-log`.
 3. Rode **`LOOP(<CANDIDATE_PATH>, ESTUDO_NOVOS, 3)`** (a primitiva do Passo 5b): afina **só** o delta no candidate; o champion **não** é tocado. Artefatos em `build-log/`.
 
-Sem checkpoint aqui — o portão de qualidade do Modo 2 é o champion-vs-candidate (Passo 6-8) com o held-out. Siga para o Passo 6.
+Sem checkpoint aqui — o portão de qualidade do Modo 2 é o champion-vs-candidate (Passo 6-8) com o portão de regressão pré-existente (Passo 7c). Siga para o Passo 6.
 
 ## Passo 6 — Modo candidate: avaliar ambos (TARGET_PATH == kb-candidate.md)
 
@@ -302,7 +303,7 @@ Sem checkpoint aqui — o portão de qualidade do Modo 2 é o champion-vs-candid
 
 ### 6a. Ler face pública + preparar cópias isoladas das duas KBs (NUNCA a secreta)
 
-1. Leia `<PUBLIC_PATH>` (1 Read) e parseie como array `PERGUNTAS` (`id`+`pergunta`+`split`). **Não leia `<SECRET_PATH>`.** (O `split` é usado no portão held-out do Passo 7c.)
+1. Leia `<PUBLIC_PATH>` (1 Read) e parseie como array `PERGUNTAS` (`id`+`pergunta`+`split`). **Não leia `<SECRET_PATH>`.** (O `split` acompanha cada pergunta para o sub-placar held-out do snapshot e para o delta-loop do Passo 5.5; o portão do Passo 7c é **agnóstico ao `split`** — bloqueia qualquer `regrediu`.)
 2. **Não** leia mais o `kb.md`/`kb-candidate.md` para embutir no prompt. Em vez disso, faça **cópias byte-exatas** num diretório de scratch da sessão (**fora** de `knowledge-bases/`) e passe aos avaliadores **apenas os caminhos**. Via Bash:
    - `SCRATCH_DIR=$(python -c "import tempfile; print(tempfile.mkdtemp())")` — diretório **opaco e único** (**não** `mktemp -d`: caminho POSIX que o `Read` não abre no Windows). **O nome do `SCRATCH_DIR` NÃO pode conter o slug `<kb>` nem derivar dele** (senão o slug vaza embutido no `KB_FILE` — ver nota de isolamento abaixo). Os arquivos-filho são `champion.md`/`candidate.md` (nomes genéricos, sem slug). Se logar o caminho para debug, só na sua saída, nunca no prompt do avaliador.
    - `cp "<KB_PATH>" "<SCRATCH_DIR>/champion.md"` → `KB_FILE_CHAMPION = <SCRATCH_DIR>/champion.md`
@@ -314,9 +315,9 @@ Sem checkpoint aqui — o portão de qualidade do Modo 2 é o champion-vs-candid
 
 > **Isolamento — passe só os caminhos das cópias.** Cada avaliador recebe **apenas** `KB_FILE` (o caminho da cópia do lado correto). **NUNCA** passe `KB_DIR`, o slug `<kb>`, nem caminhos sob `knowledge-bases/` — é isso que impede o avaliador de localizar a face secreta. **Isso inclui o próprio `KB_FILE`: o slug não pode aparecer em nenhuma parte do caminho** (nome do `SCRATCH_DIR` ou do arquivo) — use `SCRATCH_DIR` opaco (6a.2). O avaliador lê a KB **inteira** sozinho via `Read`; a prova de leitura íntegra vem de `kb_linhas_lidas` (6c/6f).
 
-### 6b. Disparar 2N kb-prober em paralelo (só com a face pública)
+### 6b. Disparar 2N kb-evaluator em paralelo (só com a face pública)
 
-Em **uma única mensagem**, dispare `2 * N` (N = número de perguntas) `Agent(subagent_type="kb-prober")` — o **mesmo** avaliador do loop (mesmo JSON-núcleo; o campo extra `lacunas` é ignorado no scoring do A/B). O `kb-evaluator` **não** é usado aqui (é exclusivo do `/run-eval`):
+Em **uma única mensagem**, dispare `2 * N` (N = número de perguntas) `Agent(subagent_type="kb-evaluator")` — o **mesmo** avaliador oficial do `/run-eval` (mesmo JSON-núcleo consumido pelo scoring; sem o campo `lacunas`, que só o loop de afinação usa). Usa-se o `kb-evaluator` aqui — e não o `kb-prober` — porque a decisão de promoção deve usar o instrumento mais confiável e consistente com a certificação:
 
 - N instâncias com `KB_FILE_CHAMPION` + cada `pergunta` (pública).
 - N instâncias com `KB_FILE_CANDIDATE` + cada `pergunta` (pública).
@@ -410,19 +411,19 @@ Mudanças por pergunta:
 
 Motivo curto: `gabarito_falhou` | `parse_error` | `encontrada esperada=X obtida=Y` | `unidade esperada=X obtida=Y` | `delta_relativo=Z (tol=T)` | `execucao_ausente`.
 
-### 7c. Decisão — portão held-out + auto-promoção
+### 7c. Decisão — portão de regressão + auto-promoção
 
-Antes de perguntar, avalie o **portão** (usando o diff do 7a + o `split` da face pública):
-- `REGRESSAO_HELDOUT` = existe alguma pergunta `split=="holdout"` com transição `aprovado→reprovado` (champion→candidate)?
+Antes de perguntar, avalie o **portão** (usando o diff do 7a + o conjunto de perguntas **novas** desta run, via `num_new`):
+- `REGRESSAO_PREEXISTENTE` = existe **alguma** pergunta com transição `aprovado→reprovado` (champion→candidate), **em qualquer `split`**? (Cobre held-out **e** estudo antiga. Perguntas novas raramente regridem — o champion não cobria o tópico novo, então tende a reprová-las (transição `melhorou`/`mantém_reprovado`) — e uma nova que ainda assim regredisse já é barrada por `NOVAS_OK`. `erro_gabarito` **não** conta como regressão.)
 - `NOVAS_OK` = todas as perguntas **novas** desta run (se houve `append`) estão `aprovado` no candidate?
 
-**Auto-promoção**: se `REGRESSAO_HELDOUT == false` **E** (`NOVAS_OK == true` ou não houve perguntas novas) **E** `candidate.kb_integra != false` → **promova automaticamente** (execute a opção "Promover" do Passo 8), imprimindo o diff (7b) + `"✓ auto-promovido: sem regressão no held-out"`. **Não** pergunte.
+**Auto-promoção**: se `REGRESSAO_PREEXISTENTE == false` **E** (`NOVAS_OK == true` ou não houve perguntas novas) **E** `candidate.kb_integra != false` → **promova automaticamente** (execute a opção "Promover" do Passo 8), imprimindo o diff (7b) + `"✓ auto-promovido: sem regressão em nenhuma pergunta pré-existente"`. **Não** pergunte.
 
-Senão (regressão no held-out, ou alguma nova falhou, ou `kb_integra == false`) → **escale** com AskUserQuestion:
+Senão (regressão em alguma pergunta pré-existente, ou alguma nova falhou, ou `kb_integra == false`) → **escale** com AskUserQuestion:
 
 ```
 AskUserQuestion(
-  question="Promover candidate → kb.md? (portão held-out não passou limpo)",
+  question="Promover candidate → kb.md? (portão de regressão não passou limpo)",
   header="Promoção",
   options=[
     "Sim, promover (backup do atual em kb.md.bak.<ts>)",
@@ -514,14 +515,14 @@ Se `--regenerate-questions` foi usado, imprima também:
 - **Inputs upfront**: todas as perguntas nos Passos 1a/2/7c, antes de invocar agents (exceto a decisão de promoção, que vem depois do eval).
 - **Pulo binário de question-creator**: faces existem E sem `--regenerate-questions` → não invoca question-creator (mantém alvo fixo).
 - **TARGET_PATH é binário**: `kb.md` para KB nova, `kb-candidate.md` para KB existente. Sem exceções.
-- **Agents/tools em paralelo**: kb-builder + question-creator no mesmo turno; 2N kb-prober no mesmo turno (A/B); N chamadas de `execute_gabarito` no mesmo turno; no loop, N kb-prober e depois N `execute_gabarito`, cada grupo no seu turno.
+- **Agents/tools em paralelo**: kb-builder + question-creator no mesmo turno; 2N kb-evaluator no mesmo turno (A/B); N chamadas de `execute_gabarito` no mesmo turno; no loop de afinação, N kb-prober e depois N `execute_gabarito`, cada grupo no seu turno.
 - **Gabarito é computado uma vez por `execute_gabarito`, verbatim, e compartilhado**: nunca regenerado, nunca no prompt do candidato; o mesmo `valor_gabarito` julga champion e candidate. Falha vira `erro_gabarito` nos dois lados — não vira regressão/melhoria.
 - **Conferência usa o scoring canônico do `/run-eval` Passo 6**: não reimplemente as fórmulas.
 - **Nunca ajuste manualmente as respostas dos subagentes**: registre o que retornaram.
-- **Nunca leia kb.md no orquestrador para tomar decisões**: no 6a você só faz `cp` das duas KBs para scratch e passa os caminhos ao kb-prober (nunca embute o conteúdo, nunca inspeciona para julgar). A decisão de promoção é baseada em diff de resultados, não em diff de markdown.
+- **Nunca leia kb.md no orquestrador para tomar decisões**: no 6a você só faz `cp` das duas KBs para scratch e passa os caminhos ao kb-evaluator (nunca embute o conteúdo, nunca inspeciona para julgar). A decisão de promoção é baseada em diff de resultados, não em diff de markdown.
 - **Snapshots carregam `meta`**: champion/candidate são `{ meta, results }` com `mode` correspondente + `kb_prompt_hash`/`kb_integra` por lado. Só a consolidação (Passo 8) appenda a entrada canônica (`mode:"full"`) ao `_index.json`. Staging **nunca** entra na linha do tempo. Falha de índice/hash emite aviso, nunca aborta; `kb_integra == false` sinaliza, não aborta.
 - **Ementa: você propõe, o usuário aprova** (Passo 2.5). `intents.json` na **raiz** de `KB_DIR` (nunca em `results/`). Sub-agents não decidem a ementa.
-- **Toda avaliação dentro do `/create-kb` é `kb-prober`** (loop de construção **e** A/B). O `kb-evaluator` é **exclusivo do `/run-eval`** — nunca disparado por este command.
+- **Avaliação por fase**: o **loop de afinação** (Passo 5/5.5) usa `kb-prober` (devolve `lacunas` para o conserto); o **A/B** (Passo 6) usa `kb-evaluator` (o mesmo avaliador da certificação, mais confiável e consistente com o `/run-eval`). O `kb-prober` **nunca** certifica nem julga o A/B; o `kb-evaluator` **nunca** entra no loop de afinação. Nenhum dos dois vê o gabarito.
 - **Gabarito nunca no prompt de quem escreve a KB**: no loop, o `FIX_PROMPT` do `kb-builder` MODE=patch é **auditado** (sem `gabarito_sql`/`valor_gabarito`/valor de referência). Você tem o gabarito no contexto para pontuar, mas o conserto vem das **fontes** (`repos/`/Looker/Metabase).
 - **Loop é staging**: artefatos em `<KB_DIR>/build-log/` (fora de `results/`), **nunca** appendados ao `_index.json`. Só o A/B consolidado (Passo 8) ou o `/run-eval` gravam na linha do tempo.
 - **kb-builder tem dois modos**: `build` (Nascimento, do zero) e `patch` (Atualização + loop, **merge** — nunca regenera). Queries seguem a convenção `@inicio`/`@fim`.
