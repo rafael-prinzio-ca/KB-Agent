@@ -42,6 +42,11 @@
       "name": "question-creator",
       "path": ".claude/agents/question-creator.md",
       "description": "Gera as DUAS faces de perguntas: questions.public.json (id+pergunta) e questions.secret.json (gabarito_sql+unidade+esperava+tolerância). Chama os MCPs Looker/Metabase DIRETAMENTE (extrai a SQL real dos tiles/questions) e valida cada gabarito_sql no BigQuery read-only antes de gravar — NUNCA lê kb.md (anti 'alvo móvel'). Invocado pelo /create-kb apenas quando as faces ainda não existem OU --regenerate-questions foi passado."
+    },
+    {
+      "name": "kb-prober",
+      "path": ".claude/agents/kb-prober.md",
+      "description": "Testador de rascunho de KB DENTRO do loop de construção do /create-kb. Lê a KB (cópia opaca) + UMA pergunta, responde gerando SQL no BigQuery read-only e devolve o mesmo JSON-núcleo do kb-evaluator MAIS o campo `lacunas` (o que faltou/ficou ambíguo na KB) para dirigir o conserto. Irmão DIAGNÓSTICO do kb-evaluator — NUNCA vê o gabarito (sem execute_gabarito) e NUNCA certifica; a certificação oficial segue sendo o kb-evaluator via /run-eval."
     }
   ],
   "mcpServers": {

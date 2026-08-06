@@ -1,0 +1,17 @@
+{
+  "kb": "serv-financeiro",
+  "gerado_em": "2026-07-16",
+  "intents": [
+    { "id": 1, "intent": "Receita MDR — receita arrecadada via MDR por meio de pagamento (boleto, Pix, link de pagamento), total e por meio" },
+    { "id": 2, "intent": "Clientes ativos em MDR — clientes com ao menos uma transação compensada/liquidada via Pix, Boleto ou Link de Pagamento" },
+    { "id": 3, "intent": "Churn de clientes MDR — clientes que saíram, novos, reativados e churn líquido (%)" },
+    { "id": 4, "intent": "ARPU e LTV MDR — receita média por usuário ativo e valor arrecadado ao longo da vida do cliente" },
+    { "id": 5, "intent": "TPV — volume total de pagamentos processados (cash in, cash out e total)" },
+    { "id": 6, "intent": "Take Rate — percentual financeiro arrecadado sobre o volume de pagamentos" },
+    { "id": 7, "intent": "Gross Revenue — faturamento bruto de Serviços Financeiros (Payments)" },
+    { "id": 8, "intent": "Float e Float Revenue — montante sob custódia (float) e receita de floating" },
+    { "id": 9, "intent": "Saldo positivo (EOD) — clientes que terminam o dia com saldo positivo (Banking Float)" },
+    { "id": 10, "intent": "Antecipação de crédito — clientes ativos em crédito (solicitações de antecipação)" },
+    { "id": 11, "intent": "Pagamentos via Conta PJ (MDP) — clientes que movimentam pagamentos de saída pela conta PJ" }
+  ]
+}

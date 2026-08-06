@@ -1,0 +1,42 @@
+[
+  {
+    "id": 1,
+    "pergunta": "Qual foi a Receita MDR total de Serviços Financeiros em junho de 2026 (01/06/2026 a 30/06/2026), somando as taxas de boleto, Pix e link de pagamento?",
+    "split": "estudo"
+  },
+  {
+    "id": 2,
+    "pergunta": "Quantos clientes ativos em MDR de Serviços Financeiros houve em junho de 2026, considerando clientes com ao menos uma transação compensada/liquidada via boleto, Pix ou link de pagamento no período?",
+    "split": "estudo"
+  },
+  {
+    "id": 3,
+    "pergunta": "Qual foi o ARPU de MDR (receita média por cliente ativo) em junho de 2026, calculado como a razão entre a Receita MDR total e a quantidade de clientes ativos em MDR no mês?",
+    "split": "estudo"
+  },
+  {
+    "id": 4,
+    "pergunta": "Qual foi o TPV de Payments (volume total de pagamentos processados/liquidados pela Conta Azul) em junho de 2026, considerando os pagamentos liquidados no período?",
+    "split": "holdout"
+  },
+  {
+    "id": 5,
+    "pergunta": "Qual foi a take rate de Payments em junho de 2026, expressa como a razão (valor entre 0 e 1) entre a receita arrecadada pela Conta Azul e o volume total de pagamentos processados/liquidados no mês?",
+    "split": "estudo"
+  },
+  {
+    "id": 6,
+    "pergunta": "Quantos clientes de Banking terminaram ao menos um dia de junho de 2026 com saldo positivo (float maior que zero no fim do dia)?",
+    "split": "estudo"
+  },
+  {
+    "id": 7,
+    "pergunta": "Quantos clientes distintos realizaram ao menos uma solicitação de antecipação de crédito não recusada (excluindo as solicitações recusadas) em junho de 2026?",
+    "split": "holdout"
+  },
+  {
+    "id": 8,
+    "pergunta": "Qual foi o NPS (Net Promoter Score) médio dos clientes de Serviços Financeiros em junho de 2026?",
+    "split": "holdout"
+  }
+]

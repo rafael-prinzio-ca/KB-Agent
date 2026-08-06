@@ -52,7 +52,9 @@ Sem sync de repos. Sem AskUserQuestion. Sem agents de build. Este command é del
 
    > **Isolamento — passe só o caminho da cópia.** Ao avaliador vai **apenas** `KB_FILE` (o caminho em scratch). **NUNCA** passe `KB_DIR`, o slug `<kb>`, nem qualquer caminho sob `knowledge-bases/`. **Isso inclui o próprio `KB_FILE`: o slug não pode aparecer em nenhuma parte do caminho — nem no nome do diretório de scratch, nem no do arquivo.** É isso que impede o avaliador de **localizar** a face secreta (`questions.secret.json`), que permanece só no `KB_DIR`.
 
-2. Leia **somente** `<PUBLIC_PATH>` e parseie. Esperado: array de objetos `{ id (number), pergunta (string) }`. Guarde como `PERGUNTAS`. **Não leia `<SECRET_PATH>`** — ela não entra no seu contexto neste passo nem em nenhum momento da montagem dos prompts. Quem a lê é a tool `execute_gabarito` (Passo 5).
+2. Leia **somente** `<PUBLIC_PATH>` e parseie. Esperado: array de objetos `{ id (number), pergunta (string), split? }`, onde `split` (opcional) é `"estudo"` ou `"holdout"`. Guarde como `PERGUNTAS`. **Não leia `<SECRET_PATH>`** — ela não entra no seu contexto neste passo nem em nenhum momento da montagem dos prompts. Quem a lê é a tool `execute_gabarito` (Passo 5).
+
+   > **Sub-placar held-out (back-compat).** Defina `HAS_SPLIT = true` se **algum** item de `PERGUNTAS` tiver o campo `split`. Se **nenhum** tiver (face legada, ex.: `suporte`), o comportamento é **idêntico ao de hoje**: sem sub-placar, nada muda nos agregados nem no `questions_hash`. Se `HAS_SPLIT`, você **continua avaliando TODAS as perguntas** (o usuário vê o placar completo) e, **além disso**, computa um sub-placar restrito às `holdout` (Passo 7.3) — o número honesto de certificação (as `holdout` nunca foram vistas pelo loop de construção do `/create-kb`). O holdout é um **recorte** do placar, **não** um filtro das perguntas avaliadas.
 
 ## Passo 3 — Disparar N kb-evaluator em paralelo (só com a face pública)
 
@@ -208,6 +210,10 @@ A partir do array `results` já avaliado (Passo 6):
 - `total` = tamanho de `results`.
 - `confianca_media` = média de `confianca_score` sobre perguntas com `parse_error == false`, arredondada a 2 casas. Se nenhuma elegível, `0.0`.
 - `bytes_total` = soma de `bytes_processed` (candidato) **+** `gabarito_bytes` (gabarito) de todas as perguntas, tratando `null` como `0`.
+- **Sub-placar held-out** (só se `HAS_SPLIT`; junte `results` com `PERGUNTAS` por `id`):
+  - `holdout_total` = nº de perguntas com `split == "holdout"`.
+  - `holdout_aprovados` = nº dessas com `status == "aprovado"`.
+  Se `!HAS_SPLIT`, ambos ficam `null`. Este é o número honesto de certificação; o placar geral (`aprovados`/`total`) continua sobre **todas** as perguntas.
 
 ### 7.4 Gravar `{ meta, results }`
 
@@ -229,7 +235,9 @@ Defina `meta.mode = "quick"` se `QUICK_MODE`, senão `"full"`. Write em `<RESULT
     "erros_gabarito": 0,
     "total": 6,
     "confianca_media": 0.88,
-    "bytes_total": 1264080
+    "bytes_total": 1264080,
+    "holdout_aprovados": 2,
+    "holdout_total": 2
   },
   "results": [ /* array do Passo 6 — um objeto por pergunta, schema abaixo */ ]
 }
@@ -241,6 +249,7 @@ Cada elemento de `results` segue este schema. O `valor_gabarito` e a `gabarito_s
 {
   "id": 1,
   "pergunta": "...",
+  "split": "estudo",
   "resposta_esperada_unidade": "count",
   "esperava_encontrar": true,
   "tolerancia_relativa": 0.05,
@@ -272,6 +281,8 @@ Cada elemento de `results` segue este schema. O `valor_gabarito` e a `gabarito_s
 ```
 
 > A `pergunta` no `results` vem da face pública. Os campos de gabarito vêm de `execute_gabarito`. Em `status == "erro_gabarito"`: `gabarito_ok = false`, `valor_gabarito = null`, e os campos do candidato ainda são preenchidos com o que ele retornou — mas `delta_*` ficam `null` e `dentro_tolerancia = false`.
+
+> **`split`** vem da face pública (`estudo`/`holdout`); em face legada sem `split`, grave `null` no item e `meta.holdout_aprovados`/`meta.holdout_total` também como `null` (back-compat — comportamento idêntico ao de hoje). Os campos `holdout_*` no `meta` são o **sub-placar de certificação** (Passo 7.3) e **não** alteram o `questions_hash` nem a comparação longitudinal (Passo 8), que seguem inalterados.
 
 > Os valores no schema acima são **exemplos ilustrativos** (como `valor_gabarito: 100000` e o `kb_ultima_linha` de exemplo), não fixos. Em especial, **`kb_linhas_lidas` e `kb_ultima_linha` são dinâmicos**: são a contagem real de linhas e a última linha não-vazia que o avaliador leu naquela run — **variam por KB e por versão**. O orquestrador compara `kb_linhas_lidas` com `KB_LINHAS` (`wc -l`) e `kb_ultima_linha` com `KB_ULTIMA_LINHA` (marcador de EOF do `kb.md` da própria run); se uma KB crescer/encolher, os dois lados acompanham juntos. Nada é hardcoded — divergência de linhas sinaliza leitura parcial; divergência do marcador sinaliza que a leitura não chegou ao fim. Os `job_id`/`gabarito_job_id` de exemplo são UUIDs (formato real do BigQuery Python client).
 
@@ -384,6 +395,7 @@ KB avaliada:  <kb>
 Snapshot:     <RESULTS_DIR>/<RUN_ID>.json
 Integridade KB: <OK | SUSPEITA (kb_prompt_hash != kb_hash)>
 Aprovados:    X/N
+[se HAS_SPLIT: "Held-out (certificação): <holdout_aprovados>/<holdout_total>  ← número honesto (perguntas nunca vistas na construção)"]
 Reprovados:   Y/N
 Erros de gabarito: G/N   [omita a linha se G == 0]
 Confiança média: Z

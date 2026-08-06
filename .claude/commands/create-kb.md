@@ -2,13 +2,20 @@
 description: Cria ou atualiza uma KB. Sincroniza repos GitHub, coleta inputs (período + URLs Looker/Metabase + definições), dispara kb-builder + question-creator em PARALELO (cada um chama os MCPs independente). Em KB com kb.md existente, gera kb-candidate.md, roda eval contra ambos com as mesmas questions e oferece promoção via diff. Uso `/create-kb <kb> [--regenerate-questions]`.
 ---
 
-# Criar/atualizar KB (champion-vs-candidate)
+# Criar/atualizar KB (Nascimento + Atualização)
 
 Você (Claude principal) é o orquestrador. Sua missão é construir ou atualizar a KB `<kb>`. Você **é o único ponto de interação com o usuário** — sub-agents não fazem AskUserQuestion. Coleta tudo upfront e passa via prompt estruturado.
 
 **Princípio fundamental**: `kb-builder` e `question-creator` rodam em paralelo, cada um chamando os MCPs Looker/Metabase **independente**. O `question-creator` **NÃO** lê o `kb.md` gerado pelo `kb-builder` — isso evita "alvo móvel" (KB e perguntas que evoluem juntas, mascarando se a melhoria é real).
 
-> **Isolamento do gabarito.** As perguntas vivem em **duas faces** (Invariante #1 do CLAUDE.md): pública (`questions.public.json` — `id`+`pergunta`) e secreta (`questions.secret.json` — gabarito + unidade + esperava + tolerância). Na avaliação champion-vs-candidate, **você lê só a face pública** para montar os prompts; a verdade é estabelecida pela tool MCP `execute_gabarito` (isolada, server-side), **depois** que os avaliadores já responderam. O orquestrador nunca abre a face secreta.
+> **Isolamento do gabarito.** As perguntas vivem em **duas faces** (Invariante #1 do CLAUDE.md): pública (`questions.public.json` — `id`+`pergunta`+`split`) e secreta (`questions.secret.json` — gabarito + unidade + esperava + tolerância + `split`). Você **lê só a face pública** para montar os prompts; a verdade é estabelecida pela tool MCP `execute_gabarito` (isolada, server-side), **depois** que os avaliadores/probers já responderam. O orquestrador nunca abre a face secreta.
+
+## Dois modos (fork por `KB_EXISTS`)
+
+- **Nascimento** (`KB_EXISTS == false`, escreve em `kb.md`): guiado + **loop test-driven**. Ementa (Passo 2.5) → build → varredura + loop com `kb-prober` sobre as perguntas `split=="estudo"` → checkpoint humano. A verdade nunca chega a quem escreve a KB; o conserto vem das **fontes** (Passo 5).
+- **Atualização** (`KB_EXISTS == true`, escreve em `kb-candidate.md`): **champion-vs-candidate** (Passo 6-8, como sempre). Antes do A/B: candidate = champion + **patch** do delta (não regenera) + delta-loop só nas perguntas novas (Passo 5.5). O portão de regressão cobre **toda pergunta pré-existente** (held-out + estudo antiga); o held-out segue como o número honesto de certificação.
+
+> **Papéis (não confundir):** dentro do `/create-kb`, o `kb-prober` faz a avaliação **do loop de afinação** (Passo 5/5.5) — é ele que devolve `lacunas` para dirigir o conserto. O **A/B champion-vs-candidate** (Passo 6) usa o `kb-evaluator` — o mesmo avaliador oficial do `/run-eval` —, porque a decisão de promoção deve usar o instrumento mais confiável e consistente com a certificação. Ou seja: **prober afina, evaluator julga.** `kb-builder`/`question-creator`/`kb-prober`/`kb-evaluator` **nunca** veem o gabarito.
 
 ## Passo 0 — Sync de repos GitHub
 
@@ -59,9 +66,10 @@ Status da KB "<kb>":
   --regenerate-questions : [sim | não]
 
 Plano:
-  kb-builder       → escrever em [kb.md (KB nova) | kb-candidate.md (KB existente)]
+  kb-builder       → [build em kb.md (Nascimento) | patch em kb-candidate.md (Atualização)]
   question-creator → [executado | pulado (mantém faces atuais)]
-  kb-evaluator     → [executado contra candidate+champion | pulado (KB nova; rode /run-eval depois)]
+  kb-prober        → [loop de construção (Nascimento) | delta-loop (Atualização)]
+  kb-evaluator     → [A/B champion-vs-candidate (Atualização) | certificação via /run-eval]
 ```
 
 > Se exatamente **uma** das faces existir (estado inconsistente, ex.: migração interrompida), trate como `FACES_EXIST = false` e force regeneração: marque `WILL_GENERATE_QUESTIONS = true` no Passo 2 e avise no resumo final que as faces foram regeneradas por estarem incompletas.
@@ -108,8 +116,9 @@ Pare.
 
 Determine `WILL_GENERATE_QUESTIONS`:
 - `FACES_EXIST == false` → `true` (sem faces não há como avaliar)
-- `FACES_EXIST == true` E `--regenerate-questions` → `true`
-- `FACES_EXIST == true` E sem flag → `false` (mantém — alvo fixo)
+- `FACES_EXIST == true` E `--regenerate-questions` → `true` (`MODE=overwrite`)
+- `FACES_EXIST == true` E **Modo 2 com assunto novo** (a ementa do Passo 2.5 adiciona intents) → `true` (`MODE=append` — gera só as perguntas dos intents novos; preserva as existentes). *Finalizado após o Passo 2.5, que revela o "assunto novo".*
+- `FACES_EXIST == true` E sem flag E sem assunto novo → `false` (mantém — alvo fixo / refresh puro)
 
 Se `WILL_GENERATE_QUESTIONS == true`, faça **uma chamada AskUserQuestion** com 4 perguntas:
 
@@ -141,10 +150,28 @@ Mapeie respostas:
 - `QUESTION_TYPES` = CSV das opções marcadas (ex.: `contagem,soma,media`). Default `contagem,soma` se nenhuma.
 - `FOCUS` = texto da resposta 8 (ou `"(none)"`).
 
-## Passo 3 — Determinar TARGET_PATH
+## Passo 2.5 — Ementa (`intents.json`)
 
-- Se `KB_EXISTS == false` → `TARGET_PATH = <KB_PATH>` (KB nova, escreve direto em `kb.md`).
-- Se `KB_EXISTS == true` → `TARGET_PATH = <CANDIDATE_PATH>` (KB existente, modo candidate).
+Roda **quando `WILL_GENERATE_QUESTIONS == true`** (KB nova; `--regenerate-questions`; ou Modo 2 com assunto novo). A ementa é a lista de **assuntos que a KB deve saber responder** — o requisito que escopa `kb-builder` e `question-creator`, e o termômetro de cobertura do checkpoint. **Você propõe; o usuário aprova** (Invariante #3).
+
+1. **Rascunhe** 5–12 intents em **linguagem de negócio** a partir do que já tem: `DEFINITIONS` + títulos/URLs de Looker/Metabase + (se úteis) nomes de tabela/métrica achados com `Grep` em `repos/` (você **pode** ler `repos/`; **não** chame MCPs aqui). Intent = um assunto/métrica, **não** uma pergunta específica (ex.: "Demanda de atendimento por canal e segmento", não "demanda no dia X"). Sem citar coluna/tabela.
+2. **Imprima** a lista numerada e faça **UMA** `AskUserQuestion` header `"Ementa"`:
+   - `"Aprovar como está"` → usa o rascunho.
+   - `"Editar"` (Other: o usuário lista ajustes/adições/remoções) → aplique.
+   - `"Refazer"` → rascunhe de novo com o feedback (máx. 2 voltas; depois siga com o melhor rascunho e avise).
+3. **Grave** `intents.json` na **raiz** de `KB_DIR` (não em `results/` — invisível ao `/eval-report`):
+   ```json
+   { "kb": "<kb>", "gerado_em": "<date +%Y-%m-%d>", "intents": [ { "id": 1, "intent": "<assunto>", "notas": "<opcional>" } ] }
+   ```
+   Em **Modo 2 (assunto novo)**: **append** os intents novos ao `intents.json` existente (Read → adiciona → Write; não reescreve os antigos; ids continuam).
+4. Guarde o texto da ementa como `INTENTS` (passado aos agents no Passo 4). Em Modo 2, guarde também `INTENTS_DELTA` = só os intents novos.
+
+> Ementa imperfeita é OK: o loop + o checkpoint a refinam (um intent que as fontes não suportam vira falha visível no checkpoint, não um erro fatal aqui).
+
+## Passo 3 — Determinar TARGET_PATH e modo de build
+
+- `KB_EXISTS == false` → **Nascimento**: `TARGET_PATH = <KB_PATH>`; `BUILD_MODE = build`.
+- `KB_EXISTS == true` → **Atualização**: `TARGET_PATH = <CANDIDATE_PATH>`; `BUILD_MODE = patch`. **Prepare o candidate a partir do champion** (não regenera): se `SKIP_BUILD != true`, via Bash `cp "<KB_PATH>" "<CANDIDATE_PATH>"`. (Se o usuário escolheu "usar candidate órfão como ponto de partida" no Passo 1a → `SKIP_BUILD == true` → **não** faça o `cp`, mantenha o órfão.)
 
 ## Passo 4 — Disparar agents em paralelo
 
@@ -157,19 +184,24 @@ Se `SKIP_BUILD != true`:
 ```
 Agent(
   subagent_type="kb-builder",
-  description="Compila <TARGET_PATH> para <kb>",
+  description="<kb>: <BUILD_MODE> em <TARGET_PATH>",
   prompt="""
 KB_NAME: <kb>
 KB_DIR: <KB_DIR>
 TARGET_PATH: <TARGET_PATH>
+MODE: <BUILD_MODE>
 OVERWRITE: true
+INTENTS: <INTENTS>
 DATE_RANGE: <DATE_RANGE>
 LOOKER_URLS: <LOOKER_URLS>
 METABASE_URLS: <METABASE_URLS>
 DEFINITIONS: <DEFINITIONS>
+LACUNAS: (none)
 """
 )
 ```
+
+> **Modo 1** → `MODE=build` (escreve `kb.md` do zero, escopado por `INTENTS`, queries em `@inicio`/`@fim`). **Modo 2** → `MODE=patch` (o `<CANDIDATE_PATH>` já é cópia do champion no Passo 3; o kb-builder **adiciona** os intents novos de `INTENTS` e re-aterra nas fontes, **sem regenerar**). `LACUNAS` na chamada inicial é `(none)` — as lacunas só aparecem no loop (Passo 5/5.5). Em nenhum caso o `kb-builder` recebe gabarito.
 
 ### 4b. question-creator (a menos que WILL_GENERATE_QUESTIONS=false)
 
@@ -182,7 +214,9 @@ Agent(
   prompt="""
 KB_NAME: <kb>
 KB_DIR: <KB_DIR>
-MODE: <create se !FACES_EXIST; senão overwrite>
+MODE: <create se !FACES_EXIST | append se Modo 2 com assunto novo (só perguntas dos intents novos) | overwrite se --regenerate-questions>
+INTENTS: <INTENTS>
+HOLDOUT_RATIO: 0.3
 NUM_QUESTIONS: <NUM_QUESTIONS>
 DIFFICULTY: <DIFFICULTY>
 QUESTION_TYPES: <QUESTION_TYPES>
@@ -205,20 +239,63 @@ Aguarde ambos. Parseie a última linha da resposta de cada como JSON.
 - Se `question-creator` retornou `status: "error"`: imprima `question-creator falhou: <reason>`. Aborte.
 - Se ambos `status: "ok"`: anote `kb_builder_status = "executado"` e `question_creator_status = "executado"` (ou "pulado" se não foi invocado).
 
-## Passo 5 — Modo "KB nova" (TARGET_PATH == kb.md)
+## Passo 5 — Modo Nascimento: loop de construção + checkpoint (TARGET_PATH == kb.md)
 
-Se `TARGET_PATH == <KB_PATH>`:
+Só quando `TARGET_PATH == <KB_PATH>` (KB nova). Afina a KB contra as perguntas `split=="estudo"` até o placar parar de melhorar. O `kb-evaluator` **não** entra aqui — ele é a certificação oficial, sua, via `/run-eval`.
 
-Imprima:
+### 5a. Preparar
+
+1. Leia `<PUBLIC_PATH>` (1 Read) → array `PERGUNTAS` (`id`+`pergunta`+`split`). **Não leia `<SECRET_PATH>`.**
+2. `ESTUDO_IDS` = ids com `split == "estudo"`. Se vazio (ex.: face legada sem split) → **pule o loop**, vá ao 5c com aviso "sem população de estudo — nada a afinar".
+3. `mkdir -p <KB_DIR>/build-log` (staging do loop; fora de `results/`, nunca no `_index.json`).
+
+### 5b. Primitiva `LOOP(KB_ALVO, ESTUDO_IDS, K=3)` — usada aqui e no Passo 5.5
+
+Para `r = 1..K`:
+
+1. **Varredura**: (1ª vez) `ToolSearch(query="select:mcp__bq_local__validate_kb_queries", max_results=1)`; então `mcp__bq_local__validate_kb_queries(kb_file="<KB_ALVO>")`. Grave o retorno em `build-log/varredura-r<r>.json`. Blocos `falhou`/`nao_query` entram nas FAILURES.
+2. **Cópia opaca**: `SCRATCH_DIR=$(python -c "import tempfile; print(tempfile.mkdtemp())")` (opaco, **sem** o slug); `cp "<KB_ALVO>" "<SCRATCH_DIR>/kb.md"` → `KB_FILE`. Passe só `KB_FILE` (nunca `KB_DIR`/slug), igual ao `/run-eval` Passo 2.1.
+3. **Probers**: em **uma mensagem**, `Agent(subagent_type="kb-prober")` para **cada** `ESTUDO_IDS` — prompt = `KB_FILE:` + `PERGUNTA:` (a pública). Seu contexto **não tem gabarito** neste momento.
+4. **Coleta** (parse tolerante do `/run-eval` Passo 4): campos-núcleo + `lacunas`.
+5. **Gabarito** — só **depois** do passo 3: `ToolSearch(query="select:mcp__bq_local__execute_gabarito", max_results=1)`; em **uma mensagem**, `mcp__bq_local__execute_gabarito(kb_dir="<KB_DIR>", question_id=id)` para cada `ESTUDO_IDS`.
+6. **Scoring**: aplique o **`/run-eval` Passo 6** (fonte canônica — não reimplemente) → `status` por pergunta.
+7. `FAILURES` = perguntas `reprovado` ∪ blocos `falhou`/`nao_query` da varredura. `erro_gabarito` **não** é falha do candidato (é o benchmark).
+8. **Parada**: `FAILURES` vazio → PARA (sucesso). Nenhum novo `aprovado` vs a rodada anterior → PARA (platô).
+9. **FIX_PROMPT (sanitizado)**: monte para o `kb-builder` — as `FAILURES` (a pergunta pública + as `lacunas` do prober) + as queries ⚠ + `INTENTS` + URLs para re-aterrar. **AUDITE antes de enviar**: o prompt **NÃO pode** conter `gabarito_sql`, `valor_gabarito` nem valor de referência (você os tem no contexto desde o passo 5 desta rodada, mas eles **nunca** vão ao patch — o conserto vem das fontes, ver Regra inviolável). Se algum aparecer, remova.
+10. **Patch**: `Agent(subagent_type="kb-builder")` com `MODE: patch`, `TARGET_PATH: <KB_ALVO>`, `LACUNAS: <FIX_PROMPT>`, `INTENTS`, `LOOKER_URLS`/`METABASE_URLS`, `DEFINITIONS`. Ele lê `<KB_ALVO>`, aplica merge dirigido (re-aterrando **primeiro nos `repos/`**), re-grava.
+11. Grave `build-log/loop-r<r>.json` (staging: respostas dos probers + scores + resumo do patch). **NUNCA** appenda ao `_index.json`.
+
+Retorna: placar de estudo da última rodada (`X/N`) + nº de queries ⚠.
+
+### 5c. Checkpoint (você decide)
+
+Rode `LOOP(<KB_PATH>, ESTUDO_IDS, 3)`. Depois, **AskUserQuestion** header `"Construção"`, mostrando `"<r> rodadas · estudo <X>/<N> aprovado · <Q> queries ⚠"`:
+- `"Aceitar KB"` → siga para 5d.
+- `"Continuar (+3 rodadas)"` → rode `LOOP` de novo e repita o checkpoint.
+- `"Abortar"` → pare; imprima que a KB ficou no estado atual (não certificada).
+
+### 5d. Fim (KB aceita)
+
 ```
-✓ KB criada: <KB_PATH>
-✓ Faces de perguntas: <PUBLIC_PATH> + <SECRET_PATH> (<num_total> perguntas)
-[se SYNC_STALE: "⚠ ATENÇÃO: repos GitHub não foram sincronizados — KB pode estar com código defasado."]
+✓ KB criada: <KB_PATH>  (estudo: <X>/<N> aprovado após <r> rodadas)
+✓ Faces de perguntas: <PUBLIC_PATH> + <SECRET_PATH> (<num_total>; <num_holdout> held-out reservadas)
+✓ Ementa: <KB_DIR>/intents.json  ·  Log de construção: <KB_DIR>/build-log/
+[se SYNC_STALE: "⚠ repos GitHub não sincronizados — KB pode ter código defasado."]
 
-Próximo: rode `/run-eval <kb>` para avaliar a qualidade.
+Próximo: rode `/run-eval <kb>` para CERTIFICAR no held-out (o kb-evaluator oficial, que não participou da construção).
 ```
 
-Fim do command. Não roda eval automaticamente.
+Fim do command (Modo Nascimento). A certificação é sua, via `/run-eval`.
+
+## Passo 5.5 — Modo Atualização: delta-loop no candidate (só se houve assunto novo)
+
+Só quando `TARGET_PATH == <CANDIDATE_PATH>` **e** o `question-creator` rodou em `append` (gerou perguntas novas para os intents do delta). Caso contrário (refresh puro, sem perguntas novas) → **pule para o Passo 6**.
+
+1. Leia `<PUBLIC_PATH>` → `PERGUNTAS`. `ESTUDO_NOVOS` = ids `split=="estudo"` **entre as perguntas novas** desta run (o `num_new` do retorno do `question-creator` delimita — são os ids mais altos). Vazio → pule ao Passo 6.
+2. `mkdir -p <KB_DIR>/build-log`.
+3. Rode **`LOOP(<CANDIDATE_PATH>, ESTUDO_NOVOS, 3)`** (a primitiva do Passo 5b): afina **só** o delta no candidate; o champion **não** é tocado. Artefatos em `build-log/`.
+
+Sem checkpoint aqui — o portão de qualidade do Modo 2 é o champion-vs-candidate (Passo 6-8) com o portão de regressão pré-existente (Passo 7c). Siga para o Passo 6.
 
 ## Passo 6 — Modo candidate: avaliar ambos (TARGET_PATH == kb-candidate.md)
 
@@ -226,7 +303,7 @@ Fim do command. Não roda eval automaticamente.
 
 ### 6a. Ler face pública + preparar cópias isoladas das duas KBs (NUNCA a secreta)
 
-1. Leia `<PUBLIC_PATH>` (1 Read) e parseie como array `PERGUNTAS` (`id`+`pergunta`). **Não leia `<SECRET_PATH>`.**
+1. Leia `<PUBLIC_PATH>` (1 Read) e parseie como array `PERGUNTAS` (`id`+`pergunta`+`split`). **Não leia `<SECRET_PATH>`.** (O `split` acompanha cada pergunta para o sub-placar held-out do snapshot e para o delta-loop do Passo 5.5; o portão do Passo 7c é **agnóstico ao `split`** — bloqueia qualquer `regrediu`.)
 2. **Não** leia mais o `kb.md`/`kb-candidate.md` para embutir no prompt. Em vez disso, faça **cópias byte-exatas** num diretório de scratch da sessão (**fora** de `knowledge-bases/`) e passe aos avaliadores **apenas os caminhos**. Via Bash:
    - `SCRATCH_DIR=$(python -c "import tempfile; print(tempfile.mkdtemp())")` — diretório **opaco e único** (**não** `mktemp -d`: caminho POSIX que o `Read` não abre no Windows). **O nome do `SCRATCH_DIR` NÃO pode conter o slug `<kb>` nem derivar dele** (senão o slug vaza embutido no `KB_FILE` — ver nota de isolamento abaixo). Os arquivos-filho são `champion.md`/`candidate.md` (nomes genéricos, sem slug). Se logar o caminho para debug, só na sua saída, nunca no prompt do avaliador.
    - `cp "<KB_PATH>" "<SCRATCH_DIR>/champion.md"` → `KB_FILE_CHAMPION = <SCRATCH_DIR>/champion.md`
@@ -240,7 +317,7 @@ Fim do command. Não roda eval automaticamente.
 
 ### 6b. Disparar 2N kb-evaluator em paralelo (só com a face pública)
 
-Em **uma única mensagem**, dispare `2 * N` (N = número de perguntas) `Agent(subagent_type="kb-evaluator")`:
+Em **uma única mensagem**, dispare `2 * N` (N = número de perguntas) `Agent(subagent_type="kb-evaluator")` — o **mesmo** avaliador oficial do `/run-eval` (mesmo JSON-núcleo consumido pelo scoring; sem o campo `lacunas`, que só o loop de afinação usa). Usa-se o `kb-evaluator` aqui — e não o `kb-prober` — porque a decisão de promoção deve usar o instrumento mais confiável e consistente com a certificação:
 
 - N instâncias com `KB_FILE_CHAMPION` + cada `pergunta` (pública).
 - N instâncias com `KB_FILE_CANDIDATE` + cada `pergunta` (pública).
@@ -334,11 +411,19 @@ Mudanças por pergunta:
 
 Motivo curto: `gabarito_falhou` | `parse_error` | `encontrada esperada=X obtida=Y` | `unidade esperada=X obtida=Y` | `delta_relativo=Z (tol=T)` | `execucao_ausente`.
 
-### 7c. AskUserQuestion: decisão
+### 7c. Decisão — portão de regressão + auto-promoção
+
+Antes de perguntar, avalie o **portão** (usando o diff do 7a + o conjunto de perguntas **novas** desta run, via `num_new`):
+- `REGRESSAO_PREEXISTENTE` = existe **alguma** pergunta com transição `aprovado→reprovado` (champion→candidate), **em qualquer `split`**? (Cobre held-out **e** estudo antiga. Perguntas novas raramente regridem — o champion não cobria o tópico novo, então tende a reprová-las (transição `melhorou`/`mantém_reprovado`) — e uma nova que ainda assim regredisse já é barrada por `NOVAS_OK`. `erro_gabarito` **não** conta como regressão.)
+- `NOVAS_OK` = todas as perguntas **novas** desta run (se houve `append`) estão `aprovado` no candidate?
+
+**Auto-promoção**: se `REGRESSAO_PREEXISTENTE == false` **E** (`NOVAS_OK == true` ou não houve perguntas novas) **E** `candidate.kb_integra != false` → **promova automaticamente** (execute a opção "Promover" do Passo 8), imprimindo o diff (7b) + `"✓ auto-promovido: sem regressão em nenhuma pergunta pré-existente"`. **Não** pergunte.
+
+Senão (regressão em alguma pergunta pré-existente, ou alguma nova falhou, ou `kb_integra == false`) → **escale** com AskUserQuestion:
 
 ```
 AskUserQuestion(
-  question="Promover candidate → kb.md?",
+  question="Promover candidate → kb.md? (portão de regressão não passou limpo)",
   header="Promoção",
   options=[
     "Sim, promover (backup do atual em kb.md.bak.<ts>)",
@@ -430,9 +515,14 @@ Se `--regenerate-questions` foi usado, imprima também:
 - **Inputs upfront**: todas as perguntas nos Passos 1a/2/7c, antes de invocar agents (exceto a decisão de promoção, que vem depois do eval).
 - **Pulo binário de question-creator**: faces existem E sem `--regenerate-questions` → não invoca question-creator (mantém alvo fixo).
 - **TARGET_PATH é binário**: `kb.md` para KB nova, `kb-candidate.md` para KB existente. Sem exceções.
-- **Agents/tools em paralelo**: kb-builder + question-creator no mesmo turno; 2N kb-evaluator no mesmo turno; N chamadas de `execute_gabarito` no mesmo turno.
+- **Agents/tools em paralelo**: kb-builder + question-creator no mesmo turno; 2N kb-evaluator no mesmo turno (A/B); N chamadas de `execute_gabarito` no mesmo turno; no loop de afinação, N kb-prober e depois N `execute_gabarito`, cada grupo no seu turno.
 - **Gabarito é computado uma vez por `execute_gabarito`, verbatim, e compartilhado**: nunca regenerado, nunca no prompt do candidato; o mesmo `valor_gabarito` julga champion e candidate. Falha vira `erro_gabarito` nos dois lados — não vira regressão/melhoria.
 - **Conferência usa o scoring canônico do `/run-eval` Passo 6**: não reimplemente as fórmulas.
 - **Nunca ajuste manualmente as respostas dos subagentes**: registre o que retornaram.
 - **Nunca leia kb.md no orquestrador para tomar decisões**: no 6a você só faz `cp` das duas KBs para scratch e passa os caminhos ao kb-evaluator (nunca embute o conteúdo, nunca inspeciona para julgar). A decisão de promoção é baseada em diff de resultados, não em diff de markdown.
 - **Snapshots carregam `meta`**: champion/candidate são `{ meta, results }` com `mode` correspondente + `kb_prompt_hash`/`kb_integra` por lado. Só a consolidação (Passo 8) appenda a entrada canônica (`mode:"full"`) ao `_index.json`. Staging **nunca** entra na linha do tempo. Falha de índice/hash emite aviso, nunca aborta; `kb_integra == false` sinaliza, não aborta.
+- **Ementa: você propõe, o usuário aprova** (Passo 2.5). `intents.json` na **raiz** de `KB_DIR` (nunca em `results/`). Sub-agents não decidem a ementa.
+- **Avaliação por fase**: o **loop de afinação** (Passo 5/5.5) usa `kb-prober` (devolve `lacunas` para o conserto); o **A/B** (Passo 6) usa `kb-evaluator` (o mesmo avaliador da certificação, mais confiável e consistente com o `/run-eval`). O `kb-prober` **nunca** certifica nem julga o A/B; o `kb-evaluator` **nunca** entra no loop de afinação. Nenhum dos dois vê o gabarito.
+- **Gabarito nunca no prompt de quem escreve a KB**: no loop, o `FIX_PROMPT` do `kb-builder` MODE=patch é **auditado** (sem `gabarito_sql`/`valor_gabarito`/valor de referência). Você tem o gabarito no contexto para pontuar, mas o conserto vem das **fontes** (`repos/`/Looker/Metabase).
+- **Loop é staging**: artefatos em `<KB_DIR>/build-log/` (fora de `results/`), **nunca** appendados ao `_index.json`. Só o A/B consolidado (Passo 8) ou o `/run-eval` gravam na linha do tempo.
+- **kb-builder tem dois modos**: `build` (Nascimento, do zero) e `patch` (Atualização + loop, **merge** — nunca regenera). Queries seguem a convenção `@inicio`/`@fim`.

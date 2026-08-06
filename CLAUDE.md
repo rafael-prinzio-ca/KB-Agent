@@ -6,7 +6,7 @@ Contexto para o Claude trabalhar neste repositório sem regredir invariantes. Co
 
 `kb-manager` é um plugin do Claude Code que constrói, versiona e avalia **Knowledge Bases sobre dados** (data dictionaries + perguntas-benchmark). Ciclo coberto por três slash commands: `/create-kb` (build/update), `/run-eval` (avaliação; `--quick` = check diário binário vs última run verde) e `/eval-report` (relatório histórico — leitura pura, gera HTML para gestores).
 
-Stack: slash commands + subagents Claude (`kb-builder`, `question-creator`, `kb-evaluator`) + 3 MCPs Python locais (`bq_local`, `looker_local`, `metabase_local`) que falam com BigQuery, Looker e Metabase. Perguntas vivem em **duas faces** (pública/secreta) e o gabarito é executado por um ator isolado — a tool MCP `execute_gabarito` (do `bq_local`) — ver Invariante #1 e #7.
+Stack: slash commands + subagents Claude (`kb-builder`, `question-creator`, `kb-prober`, `kb-evaluator`) + 3 MCPs Python locais (`bq_local`, `looker_local`, `metabase_local`) que falam com BigQuery, Looker e Metabase. Perguntas vivem em **duas faces** (pública/secreta) e o gabarito é executado por um ator isolado — a tool MCP `execute_gabarito` (do `bq_local`) — ver Invariante #1 e #7.
 
 ## Invariantes — NÃO QUEBRAR
 
@@ -19,7 +19,7 @@ Duas blindagens contra o mesmo risco (o benchmark "casar" com a KB e a avaliaç�
 **(a) `question-creator` NUNCA lê `kb.md`.** O agente de perguntas chama os MCPs Looker/Metabase **diretamente**, não derivado da KB. Motivo: se perguntas saíssem do `kb.md`, KB e benchmark evoluiriam juntos ("alvo móvel") e seria impossível medir melhoria entre versões. Se for tentado refatorar para "reaproveitar contexto", **pare e confirme**.
 
 **(b) Perguntas vivem em DUAS FACES; o orquestrador lê só a pública.** O `questions.json` único foi dividido (separação **física**, não instrucional) em:
-- **`questions.public.json`** — array de `{ id, pergunta }`. **Única** face que o orquestrador (`/run-eval`, `/create-kb`) lê para montar o prompt do `kb-evaluator`.
+- **`questions.public.json`** — array de `{ id, pergunta }`. **Única** face que o orquestrador (`/run-eval`, `/create-kb`) lê para montar o prompt do avaliador — `kb-evaluator` (A/B do `/create-kb` e certificação `/run-eval`) ou `kb-prober` (loop de afinação do `/create-kb`).
 - **`questions.secret.json`** — `{ id, gabarito_sql, resposta_esperada_unidade, esperava_encontrar, tolerancia_relativa, _* }`. Lida **exclusivamente** pela tool MCP `execute_gabarito` (do `bq_local`, server-side); **nunca** por quem monta o prompt do avaliador.
 
 Motivo do design: enquanto o gabarito estivesse ao alcance de quem prepara o prompt, o vazamento era possível (e aconteceu — o orquestrador codificou a fórmula da resposta no prompt do avaliador, com colunas inexistentes no `kb.md`). A separação em faces + a ordem do fluxo (avaliadores **antes** de `execute_gabarito`) tornam isso fisicamente impossível: no momento da montagem do prompt, o orquestrador nunca viu a `gabarito_sql`.
