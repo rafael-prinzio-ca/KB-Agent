@@ -25,6 +25,11 @@
       "name": "eval-report",
       "path": ".claude/commands/eval-report.md",
       "description": "Relatório histórico de qualidade de uma KB — leitura pura (sem agentes, sem BigQuery). Lê snapshots/índice em results/, imprime tabela de tendência e gera HTML standalone (offline, sem dependências) em reports/<kb>-history.html para gestores. Uso: /eval-report <kb>"
+    },
+    {
+      "name": "kb-layer",
+      "path": ".claude/commands/kb-layer.md",
+      "description": "Converte um kb.md já validado para a camada semântica estruturada kb-layer.md (blocos ```yaml meta``` endereçáveis por id: source/policy/measure/report/pitfall/term/note). Derivação pura — não toca o kb.md, não consulta fontes externas, não avalia. Confere integridade com scripts/check-kb-layer.py. Uso: /kb-layer <kb> [--force]"
     }
   ],
   "agents": [
@@ -47,6 +52,11 @@
       "name": "kb-prober",
       "path": ".claude/agents/kb-prober.md",
       "description": "Testador de rascunho de KB DENTRO do loop de construção do /create-kb. Lê a KB (cópia opaca) + UMA pergunta, responde gerando SQL no BigQuery read-only e devolve o mesmo JSON-núcleo do kb-evaluator MAIS o campo `lacunas` (o que faltou/ficou ambíguo na KB) para dirigir o conserto. Irmão DIAGNÓSTICO do kb-evaluator — NUNCA vê o gabarito (sem execute_gabarito) e NUNCA certifica; a certificação oficial segue sendo o kb-evaluator via /run-eval."
+    },
+    {
+      "name": "kb-restructurer",
+      "path": ".claude/agents/kb-restructurer.md",
+      "description": "Converte um kb.md já validado para a camada semântica estruturada kb-layer.md — blocos ```yaml meta``` endereçáveis por id (source, policy, measure, report, pitfall, term, note). Fonte ÚNICA é o kb.md: não consulta Looker/Metabase/BigQuery/repos e não descobre conteúdo novo. Reexpressa, nunca reescreve — SQL validada é copiada verbatim; campo sem base no kb.md é omitido, nunca inventado. Invocado pelo /kb-layer."
     }
   ],
   "mcpServers": {
