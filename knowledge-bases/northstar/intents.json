@@ -1,0 +1,61 @@
+{
+  "kb": "northstar",
+  "gerado_em": "2026-08-07",
+  "intents": [
+    {
+      "id": 1,
+      "intent": "Logo churn e winback do mês vs. meta, por canal de aquisição (venda direta / recomendação)",
+      "notas": "Métrica de Negócio, peso 50% na tabela de Indicadores. Meta definida por FP&A. Bloco 1 (e 1B - Renewal) do painel."
+    },
+    {
+      "id": 2,
+      "intent": "Cobertura de onboarding — clientes atendidos 1:1 sobre o total vendido, e capacity por analista",
+      "notas": "Métrica Estratégica, peso 25%, meta aspiracional 80%. Enquanto não há o número de quem pediu apoio, o denominador é o total de vendas. Desdobra em meta de participantes por ISM (teto de 70 clientes/analista). Blocos 2 e 3 do painel."
+    },
+    {
+      "id": 3,
+      "intent": "Tempo de cobertura — setup concluído dentro de 15 dias da contratação",
+      "notas": "Meta 85%. Bloco 4 do painel."
+    },
+    {
+      "id": 4,
+      "intent": "Funil de onboarding — etapas da inscrição à conclusão (sem agendamento, 1ª reunião, avanço além dela, abandono, não comparecimento, recusa do formulário)",
+      "notas": "Estados por safra, acumulados até a data de referência. Bloco 2 do painel."
+    },
+    {
+      "id": 5,
+      "intent": "Qualidade do setup — reuso contínuo nos 30 dias após o setup finalizado",
+      "notas": "Métrica do ISM, meta 80%: clientes sem nenhuma lacuna de 5 ou mais dias úteis consecutivos nos primeiros 30 dias após o setup, sobre o total de setups. Bloco 5 do painel."
+    },
+    {
+      "id": 6,
+      "intent": "Teste A/B de playbook (Controle vs. Variante) — comparação da qualidade do setup entre grupos",
+      "notas": "Experimento de 5 semanas: Controle = 8 ISMs / 1 reunião / playbook MMA de 7 features; Variante = 4 ISMs / 2 reuniões / eixo despesas + conciliação ao vivo. Blocos 5b/5c do painel."
+    },
+    {
+      "id": 7,
+      "intent": "Adoção da safra — clientes engajados sobre o total da safra, na régua de dias úteis",
+      "notas": "Métrica Estratégica, peso 25%, meta aspiracional 80%. No fechamento mensal: clientes com uso nos últimos 5 dias úteis consecutivos do mês ÷ total de assinantes ativos. Cliente que entrou em churn sai da conta a partir do churn. Bloco 6 do painel."
+    },
+    {
+      "id": 8,
+      "intent": "Zona de risco — clientes com 5 dias úteis consecutivos sem uso do ERP",
+      "notas": "Gatilho da atuação da CSM; régua vale em qualquer ponto da janela de 90 dias após a contratação. Blocos 6 e 7 do painel."
+    },
+    {
+      "id": 9,
+      "intent": "Carteira de CS — conversão de retomada de uso e reincidência em zona de risco",
+      "notas": "Conversão: clientes que voltaram a usar após 5 dias consecutivos sem uso ÷ carteira ativa (meta 90%; 75% voltam organicamente). Reincidência: voltaram à zona de risco após intervenção ÷ total com contato (meta ≤40%; histórico ~78%). Blocos 6 e 7."
+    },
+    {
+      "id": 10,
+      "intent": "Efetividade das tratativas da CSM por canal (e-mail, WhatsApp, reunião) e contatos sem resposta",
+      "notas": "Régua Dia 5 e-mail → Dia 7 WhatsApp → Dia 9 ligação. Blocos 7, 8, 9 e 10 do painel (inclui conversão do status 'Abandono')."
+    },
+    {
+      "id": 11,
+      "intent": "Prontidão e satisfação do cliente (CSAT pós-setup, CSAT pós-call, aptidão de uso em D90)",
+      "notas": "CSAT = respondentes com nota ≥4 de 5 ÷ total de respondentes (meta ≥95%); aptidão D90 = responderam SIM à pesquisa ao fim dos 90 dias ÷ total com setup (meta 90%). Limitação conhecida: chegam como snapshot da carteira, sem série histórica (Bloco 7)."
+    }
+  ]
+}

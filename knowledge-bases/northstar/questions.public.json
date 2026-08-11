@@ -1,0 +1,42 @@
+[
+  {
+    "id": 1,
+    "pergunta": "Quantos clientes voltaram para a base como winback em julho de 2026, somando os canais de venda direta e recomendação (excluindo migrações em lote e clientes de origem gratuita)?",
+    "split": "estudo"
+  },
+  {
+    "id": 2,
+    "pergunta": "Para os clientes que entraram na base em julho de 2026, qual foi a Cobertura de Onboarding oficial (o indicador com meta de 80%, na versão que desconsidera do denominador quem recusou o treinamento — não a cobertura bruta), apurada na posição de 31 de julho de 2026? Responda como fração entre 0 e 1.",
+    "split": "estudo"
+  },
+  {
+    "id": 3,
+    "pergunta": "Entre os clientes da safra de julho de 2026 que já tinham concluído o setup na posição de 31 de julho de 2026, que proporção concluiu em até 15 dias contados da contratação (Tempo de Cobertura, meta de 85%)? Responda como fração entre 0 e 1.",
+    "split": "estudo"
+  },
+  {
+    "id": 4,
+    "pergunta": "Quantos clientes que entraram na base em julho de 2026 estavam com o acompanhamento de onboarding em situação de abandono na posição de 31 de julho de 2026?",
+    "split": "estudo"
+  },
+  {
+    "id": 5,
+    "pergunta": "Na safra de julho de 2026, considerando apenas os clientes cujo setup foi finalizado e que já estavam dentro da janela de apuração de 1 a 30 dias após a finalização em 31 de julho de 2026, qual proporção manteve uso contínuo do ERP — sem nenhuma lacuna de 5 ou mais dias úteis consecutivos sem uso (Qualidade de Setup, meta de 80%)? Responda como fração entre 0 e 1.",
+    "split": "holdout"
+  },
+  {
+    "id": 6,
+    "pergunta": "Quantos clientes da safra de julho de 2026 estavam na zona de risco de adoção no fechamento de julho de 2026, ou seja: assinantes ativos (nem cancelados nem inadimplentes naquele dia) que acumulavam 5 ou mais dias úteis consecutivos sem usar o ERP, já tendo pelo menos 5 dias úteis e 7 dias corridos de vida desde a contratação?",
+    "split": "estudo"
+  },
+  {
+    "id": 7,
+    "pergunta": "Na carteira de CS da safra de julho de 2026, qual foi a taxa de resposta das tratativas por e-mail e WhatsApp na posição de 31 de julho de 2026 — clientes contatados que responderam sobre o total de clientes contatados? Responda como fração entre 0 e 1.",
+    "split": "holdout"
+  },
+  {
+    "id": 8,
+    "pergunta": "Qual foi o NPS médio dos clientes que passaram pelo onboarding em julho de 2026?",
+    "split": "holdout"
+  }
+]
