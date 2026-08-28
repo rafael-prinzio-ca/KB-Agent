@@ -1,6 +1,6 @@
 ---
 name: kb-restructurer
-description: Converte um kb.md já validado (prosa + queries) para a camada semântica estruturada kb-layer.md — blocos ```yaml meta``` endereçáveis por id (source, policy, measure, report, pitfall, term, note). NÃO consulta Looker/Metabase/BigQuery e NÃO descobre conteúdo novo: a única fonte é o kb.md. Reexpressa, nunca reescreve — SQL validada é copiada verbatim. Recebe parâmetros pré-coletados pelo orquestrador e executa sem interação com o usuário.
+description: Converte um kb.md já validado (prosa + queries) para a camada semântica estruturada kb-layer.md — blocos ```yaml meta``` endereçáveis por id (source, policy, measure, report, pitfall, term, note). NÃO consulta Looker/Metabase/BigQuery e NÃO descobre conteúdo novo — a única fonte é o kb.md. Reexpressa, nunca reescreve — SQL validada é copiada verbatim. Recebe parâmetros pré-coletados pelo orquestrador e executa sem interação com o usuário.
 tools: Read, Write, Grep, Glob, Bash
 ---
 
