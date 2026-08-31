@@ -104,7 +104,10 @@ silver_serve.agent_capacity (filtro: team = 'Servir')
 - **Partição**: `nk_date` (DATE, diária)
 - **Cluster**: `channel`, `team`
 - **Explore Looker**: `dim_blip_messages`
-- **Granularidade**: 1 linha = 1 interação/sessão (`sum_of_interactions = 1` por linha)
+- **Granularidade**: 1 linha = 1 interação/sessão = 1 `thread_uid` (`sum_of_interactions = 1` por
+  linha). **`thread_uid` é único na tabela** — verificado no BigQuery em 31/08/2026: na janela
+  set/25–ago/26 são 661.797 linhas = 661.797 `thread_uid` distintos, zero NULL, máximo de 1 linha
+  por thread (idem em abr/26, jul/26 e ago/25 isolados)
 
 | Campo | Tipo | Descrição |
 |---|---|---|
@@ -116,7 +119,7 @@ silver_serve.agent_capacity (filtro: team = 'Servir')
 | **subcategory** | STRING | **Subcategoria temática da interação** — categorização nativa, ver §5 |
 | bot_type | STRING | Tipo de bot: Gen2, Gen3 CA Mais, Gen3 CA Pro, Bot_Fin |
 | bot_departament | STRING | Departamento: `Servir`, `Retenção` |
-| csat_type | STRING | N/I, csat_retidos, csat_transbordados |
+| csat_type | STRING | N/I, csat_retidos, csat_transbordados, csat_desistente; **um único valor por thread** e raros NULL (1.470 linhas em set/25–ago/26, ~0,2%) |
 | csat_bot_comment | STRING | Comentário deixado na avaliação do bot |
 | open_offline | BOOLEAN | Conversa abriu ticket offline (só interações vindas do Intercom) |
 | is_gen3 | BOOLEAN | É fluxo Gen3 |
@@ -162,9 +165,19 @@ silver_serve.agent_capacity (filtro: team = 'Servir')
   (A description do schema menciona um valor `Ouvidoria`, que não aparece nos dados dos últimos 12 meses.)
 
 **Valores de csat_type**:
-- `N/I` — sessão sem avaliação (topo de funil, maioria das interações)
-- `csat_retidos` — avaliação de cliente retido pelo bot ← usado para CSAT Cami
+- `N/I` — sessão sem avaliação (topo de funil, maioria das interações; **zero avaliações**, verificado)
+- `csat_retidos` — avaliação de cliente retido pelo bot ← base do recorte analítico "CSAT Cami retidos" (deck WOW)
 - `csat_transbordados` — avaliação de cliente transbordado para humano
+- `csat_desistente` — avaliação de cliente que desistiu (raro: 370 linhas / 355 avaliações em set/25–ago/26)
+- ⚠️ **O CSAT oficial NÃO filtra `csat_type`** (correção 31/08/2026): a measure `dim_chatbot.csat` do
+  LookML (`dim_chatbot.view.lkml:250`) é `count_of_positive_ratings / count_of_total_ratings` sem
+  nenhum filtro, e **nenhum tile do dashboard 210 filtra `csat_type`** (verificado nos 26 tiles). O
+  jeito oficial de restringir a linhas avaliadas é a dimensão LookML `has_rating`
+  (`dim_chatbot.view.lkml:160`), usada no tile 5690 — não `csat_type`. O recorte
+  `csat_type='csat_retidos'` é analítico (usado no deck WOW e nas queries validadas §6/§10): hoje
+  desloca o CSAT em ~0,5–1pp, mas em janelas antigas a diferença chegou a **12pp** (fev/26:
+  88,01% só-retidos vs 76,09% oficial), porque `csat_transbordados` concentrava ~80% das avaliações
+  até mar/26 (14.942 em mar/26 → 219 em abr/26).
 
 ---
 
@@ -643,7 +656,7 @@ Antes de responder, identifique **qual tile** a pergunta quer. Ver "Retenção C
 | # | Armadilha | Detalhe |
 |---|---|---|
 | 1 | **Bot_Fin não é o Cami** | bot_type='Bot_Fin' é o bot Financeiro/FinAI — incluído em `bot_departament='Servir'` mas representa produto diferente. Para demanda Cami usar `bot_departament='Servir'` sem filtrar bot_type (o dashboard oficial inclui Bot_Fin) |
-| 2 | **csat_type cria múltiplas linhas** | Cada thread pode ter até 3 linhas (N/I + csat_retidos + csat_transbordados). Para contar sessões únicas usar apenas `csat_type='N/I'`. Para CSAT usar `csat_type='csat_retidos'` |
+| 2 | **csat_type é UM por thread — não filtre N/I para contar sessões** | Correção (31/08/2026, verificado no BigQuery): cada thread tem **exatamente 1 linha**, com um único `csat_type` (`N/I` = sessão sem avaliação; `csat_retidos`/`csat_transbordados` = sessão avaliada; NULL raro). A regra antiga ("cada thread pode ter até 3 linhas; sessões únicas = filtrar `csat_type='N/I'`") **não descreve os dados atuais** — possivelmente mudou com o reprocessamento retroativo (§5 armadilha de reprocessamento). Para contar **sessões/threads**: `COUNT(*)` (= `COUNT(DISTINCT thread_uid)`) com `bot_departament='Servir'` e **sem** filtro de `csat_type` — filtrar `N/I` descartaria as threads avaliadas e **subcontaria** (~36% na janela set/25–ago/26; ~6% em jul/26). Para **CSAT e contagens de avaliações**, o oficial do LookML/dashboard 210 **também não filtra `csat_type`** (as linhas `N/I` têm 0 avaliações e não afetam somas); `csat_type='csat_retidos'` é recorte analítico — ver "Valores de csat_type" na §2 |
 | 3 | **Demanda Cami = todos csat_type** | `SUM(sum_of_interactions)` com `bot_departament='Servir'` sem filtro de csat_type = total correto de interações |
 | 4 | **RT (Retenção) é área separada** | Área `RT` na fact_service_metrics representa atendimentos do fluxo de Retenção — NÃO entra no filtro padrão de Atendimento |
 | 5 | **`sum_of_final_bot` é sempre 0** | Campo morto: soma **0** nos 12 meses (ago/25–jul/26), em `Servir` e `Retenção`. A descrição "conversas retidas" engana — **retenção NÃO se calcula com ele**, e sim `1 − transbordos/interações`. A measure `count_of_final_bot` do LookML herda o problema |

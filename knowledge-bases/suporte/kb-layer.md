@@ -79,7 +79,7 @@ kind: source
 id: dim_chatbot
 table: contaazul-ssbi.gold_serve.dim_chatbot
 layer: gold
-grain: [thread_uid, csat_type]
+grain: [thread_uid]
 date_column: nk_date
 date_type: DATE
 partition: nk_date
@@ -95,7 +95,7 @@ columns:
   - {name: subcategory, type: STRING, desc: "Subcategoria temática da interação — categorização nativa, mais de 25 valores"}
   - {name: bot_type, type: STRING, desc: "Tipo de bot", values: ["Gen2", "Gen3 CA Mais", "Gen3 CA Pro", "Bot_Fin"]}
   - {name: bot_departament, type: STRING, desc: "Departamento do fluxo; linhas NULL têm 0 interações", values: ["Servir", "Retenção"], nullable: true}
-  - {name: csat_type, type: STRING, desc: "Tipo de avaliação da sessão", values: ["N/I", "csat_retidos", "csat_transbordados"]}
+  - {name: csat_type, type: STRING, desc: "Tipo de avaliação da sessão — um único valor por thread; NULL raro (1.470 linhas em set/25–ago/26, ~0,2%); N/I tem zero avaliações", values: ["N/I", "csat_retidos", "csat_transbordados", "csat_desistente"], nullable: true}
   - {name: csat_bot_comment, type: STRING, desc: "Comentário deixado na avaliação do bot"}
   - {name: open_offline, type: BOOLEAN, desc: "Conversa abriu ticket offline (só interações vindas do Intercom)"}
   - {name: is_gen3, type: BOOLEAN, desc: "É fluxo Gen3"}
@@ -117,11 +117,12 @@ columns:
   - {name: sum_of_positive_ratings_gen3, type: INTEGER, desc: "Avaliações positivas geradas pela IA Gen3"}
   - {name: sum_of_negative_ratings_gen3, type: INTEGER, desc: "Avaliações negativas geradas pela IA Gen3"}
   - {name: sum_of_total_ratings_gen3, type: INTEGER, desc: "Total de avaliações Gen3"}
-pitfalls: [bot-fin-nao-e-cami, csat-type-cria-multiplas-linhas, demanda-cami-inclui-todos-csat-type, sum-of-final-bot-sempre-zero, subcategory-e-mais-barata-que-tags, partner-profile-nao-particiona-base, contatos-unicos-usa-duas-colunas, diferente-de-parceiro-nao-e-pme, parceiro-em-dim-chatbot-com-not-in-inclui-ni, canal-ios-grafia-exata, bot-departament-null-nao-e-bot-fin, gen2-praticamente-extinto, sum-of-total-ratings-como-denominador, tabelas-reprocessadas-retroativamente, fin-ai-concentra-as-avaliacoes-cami, customer-type-null-em-dim-chatbot-abril-2026, volume-de-avaliacoes-cami-muda-com-reprocessamento]
+pitfalls: [bot-fin-nao-e-cami, csat-type-e-um-por-thread, csat-cami-nao-filtra-csat-type, demanda-cami-inclui-todos-csat-type, sum-of-final-bot-sempre-zero, subcategory-e-mais-barata-que-tags, partner-profile-nao-particiona-base, contatos-unicos-usa-duas-colunas, diferente-de-parceiro-nao-e-pme, parceiro-em-dim-chatbot-com-not-in-inclui-ni, canal-ios-grafia-exata, bot-departament-null-nao-e-bot-fin, gen2-praticamente-extinto, sum-of-total-ratings-como-denominador, tabelas-reprocessadas-retroativamente, fin-ai-concentra-as-avaliacoes-cami, customer-type-null-em-dim-chatbot-abril-2026, volume-de-avaliacoes-cami-muda-com-reprocessamento]
 provenance: [dash-210]
 ```
 
 Interações diárias dos chatbots (Cami/SuperCami — Blip/Takeblip/Ultimate); 1 linha = 1 interação/sessão.
+`thread_uid` é único por linha (verificado no BigQuery em abr/26, jul/26 e ago/25: máx. 1 linha por thread).
 Em jul/2026 o departamento Servir tem 42.135 interações, 99% delas do `Bot_Fin` (41.772).
 
 ```yaml meta
@@ -353,31 +354,17 @@ A mesma regra usa `area` na `fact_service_metrics` e `assignee_area` na
 ```yaml meta
 kind: policy
 id: escopo-csat-retidos
-title: Avaliações do bot — apenas clientes retidos
-severity: blocking
-applies_to: [dim_chatbot]
-predicate:
-  dim_chatbot: "csat_type = 'csat_retidos'"
-rationale: "O CSAT da Cami é medido sobre o cliente que o bot resolveu (retido); 'csat_transbordados' avalia quem foi para o humano e 'N/I' é sessão sem avaliação."
-if_omitted: "Mistura avaliações de retidos e transbordados e multiplica linhas por thread (até 3), distorcendo a nota."
-```
-
-Aplica-se a CSAT Cami e ao volume de avaliações — não à demanda.
-
-```yaml meta
-kind: policy
-id: escopo-sessoes-unicas
-title: Contagem de sessões únicas do chatbot
+title: Recorte analítico — avaliações de clientes retidos pelo bot
 severity: advisory
 applies_to: [dim_chatbot]
 predicate:
-  dim_chatbot: "csat_type = 'N/I'"
-rationale: "Cada thread pode gerar até 3 linhas (N/I + csat_retidos + csat_transbordados); a linha N/I é a que representa a sessão."
-if_omitted: "Sessões com avaliação são contadas 2 ou 3 vezes."
+  dim_chatbot: "csat_type = 'csat_retidos'"
+rationale: "Isola a avaliação de quem o bot resolveu sem transbordar. NÃO é a definição oficial: nem a measure dim_chatbot.csat do LookML (dim_chatbot.view.lkml:250) nem qualquer tile do dashboard 210 filtram csat_type. Use só quando a pergunta pedir explicitamente o CSAT/avaliações dos retidos (ex.: deck WOW)."
+if_omitted: "Nada quebra — você obtém o CSAT/contagem oficial do LookML, que inclui as avaliações de transbordados e desistentes."
 ```
 
-Só para **contar sessões**. Para demanda (`SUM(sum_of_interactions)`) o correto é **não** filtrar
-`csat_type`, porque a soma já é consistente entre as linhas.
+Recorte **analítico**, não default — ver `csat-cami-nao-filtra-csat-type`. As queries validadas da
+§6/§10 do `kb.md` (blended, Q7) o usam na SQL verbatim, e o deck WOW reporta o CSAT Cami com ele.
 
 ```yaml meta
 kind: policy
@@ -608,7 +595,7 @@ unit: count
 expr: SUM(sum_of_interactions)
 policies: [escopo-servir]
 direction: neutral
-pitfalls: [demanda-cami-inclui-todos-csat-type, bot-fin-nao-e-cami, csat-type-cria-multiplas-linhas]
+pitfalls: [demanda-cami-inclui-todos-csat-type, bot-fin-nao-e-cami, csat-type-e-um-por-thread]
 status: stable
 provenance: [dash-210]
 ```
@@ -717,8 +704,9 @@ title: Demanda abandonada
 source: fact_service_metrics
 unit: count
 expr: SUM(count_of_abandoned)
+policies: [escopo-area-atendimento]
 direction: lower_is_better
-pitfalls: [channel-vazio-entra-no-abandono, anomalia-channel-vazio-abril-2026]
+pitfalls: [channel-vazio-entra-no-abandono, anomalia-channel-vazio-abril-2026, abandono-do-592-usa-area-com-rt]
 status: stable
 ```
 
@@ -743,42 +731,80 @@ Positivas sobre o total avaliado (positivas + negativas). Segmentar com `segment
 ```yaml meta
 kind: measure
 id: csat-cami
-title: CSAT Cami
+title: CSAT Cami (definição oficial do LookML)
 source: dim_chatbot
 unit: ratio
-expr: SUM(sum_of_positive_ratings) / NULLIF(SUM(sum_of_positive_ratings + sum_of_negative_ratings), 0)
-policies: [escopo-servir, escopo-csat-retidos]
+expr: SUM(sum_of_positive_ratings) / NULLIF(SUM(sum_of_total_ratings), 0)
+policies: [escopo-servir]
 direction: higher_is_better
-pitfalls: [csat-type-cria-multiplas-linhas, fin-ai-concentra-as-avaliacoes-cami, volume-de-avaliacoes-cami-muda-com-reprocessamento]
+pitfalls: [csat-cami-nao-filtra-csat-type, csat-type-e-um-por-thread, fin-ai-concentra-as-avaliacoes-cami, volume-de-avaliacoes-cami-muda-com-reprocessamento]
 status: stable
 provenance: [dash-210]
 ```
 
-Nota do bot, medida só sobre clientes **retidos**.
+**É a resposta padrão.** Definição autoritativa: measure `dim_chatbot.csat`
+(`dim_chatbot.view.lkml:250`), como consumida pelo tile "CSAT" (5682) do dashboard 210 — **sem**
+filtro de `csat_type`. `sum_of_total_ratings = positivas + negativas` (verificado, diff 0), então
+`pos/(pos+neg)` dá o mesmo número. Para o recorte só-retidos, use `csat-cami-retidos`.
 
 ```yaml meta
 kind: measure
-id: csat-cami-por-total-ratings
-title: CSAT Cami com denominador sum_of_total_ratings
+id: csat-cami-retidos
+title: CSAT Cami — recorte de clientes retidos
 source: dim_chatbot
 unit: ratio
 expr: SUM(sum_of_positive_ratings) / NULLIF(SUM(sum_of_total_ratings), 0)
 policies: [escopo-servir, escopo-csat-retidos]
 direction: higher_is_better
-pitfalls: [sum-of-total-ratings-como-denominador]
+pitfalls: [csat-cami-nao-filtra-csat-type, sum-of-total-ratings-como-denominador]
 status: stable
 ```
 
-Variante usada na quebra por `bot_type`. Equivale a `csat-cami` porque
-`sum_of_total_ratings = positivas + negativas` (verificado) — o que **não** se pode usar como
-denominador é `sum_of_interactions`.
+Variante **analítica** (antes chamada `csat-cami-por-total-ratings`): mesma fórmula do
+`csat-cami`, restrita a `csat_type = 'csat_retidos'`. É o número do deck WOW (jun/26 75,5%,
+jul/26 75,0%) e o recorte das queries validadas de blended e da Q7. Hoje difere do oficial em
+~0,5–1pp; em janelas antigas chegou a **12pp** — ver `csat-cami-nao-filtra-csat-type`.
+
+```yaml meta
+kind: measure
+id: avaliacoes-positivas-cami
+title: Avaliações positivas do chatbot
+source: dim_chatbot
+unit: count
+expr: SUM(sum_of_positive_ratings)
+policies: [escopo-servir]
+direction: higher_is_better
+pitfalls: [csat-cami-nao-filtra-csat-type, volume-de-avaliacoes-cami-muda-com-reprocessamento]
+status: stable
+provenance: [dash-210]
+```
+
+Measure `dim_chatbot.count_of_positive_ratings` (`dim_chatbot.view.lkml:184`), tile "Avaliações
+Positivas" (5683) — soma pura, **sem** filtro de `csat_type`.
+
+```yaml meta
+kind: measure
+id: avaliacoes-negativas-cami
+title: Avaliações negativas do chatbot
+source: dim_chatbot
+unit: count
+expr: SUM(sum_of_negative_ratings)
+policies: [escopo-servir]
+direction: lower_is_better
+pitfalls: [csat-cami-nao-filtra-csat-type, volume-de-avaliacoes-cami-muda-com-reprocessamento]
+status: stable
+provenance: [dash-210]
+```
+
+Measure `dim_chatbot.count_of_negative_ratings` (`dim_chatbot.view.lkml:192`), tile "Avaliações
+Negativas" (5684) — soma pura, **sem** filtro de `csat_type`.
 
 ```yaml meta
 kind: measure
 id: csat-blended
 title: CSAT Blended (bot + humano)
 unit: ratio
-composed_of: [csat-humano, csat-cami]
+composed_of: [csat-humano, csat-cami-retidos]
 kind_of_measure: composite
 direction: higher_is_better
 status: stable
@@ -823,6 +849,25 @@ provenance: [dash-210]
 
 Recorte dos tiles `Acumulado Mensal` (12073/12074/12086), `Detalhado *` e `Retenção por hora`.
 Sempre **mais alta** que o KPI: 0,5 a 1,2pp ao mês. Numa janela seg–sex, idêntica ao KPI.
+
+```yaml meta
+kind: measure
+id: transbordos-cami
+title: Transbordos do Cami para humano
+source: dim_chatbot
+unit: count
+expr: SUM(sum_of_transfers)
+policies: [escopo-servir]
+direction: lower_is_better
+pitfalls: [sum-of-final-bot-sempre-zero]
+status: stable
+provenance: [dash-210]
+```
+
+Volume absoluto de transbordos (conversas passadas do bot para encantador humano). É o numerador
+da não-retenção (`retencao = 1 − transbordos/interações`) e a origem do `csat_transbordados`.
+**Não** filtrar `csat_type` — cada thread tem um único `csat_type`; filtrar descartaria threads
+inteiras (ver `csat-type-e-um-por-thread`).
 
 ```yaml meta
 kind: measure
@@ -936,15 +981,19 @@ title: % Abandono
 source: fact_service_metrics
 unit: pct
 expr: SUM(count_of_abandoned) / NULLIF(SUM(count_of_demanded), 0)
+policies: [escopo-area-atendimento]
 direction: lower_is_better
-pitfalls: [channel-vazio-entra-no-abandono, anomalia-channel-vazio-abril-2026, abandono-telefone-vem-de-customer-type-nulo]
+pitfalls: [channel-vazio-entra-no-abandono, anomalia-channel-vazio-abril-2026, abandono-telefone-vem-de-customer-type-nulo, abandono-do-592-usa-area-com-rt]
 status: stable
 provenance: [dash-220]
 ```
 
 Segmentar por `customer_type` para PME vs Parceiro. A measure oficial
 `percent_of_abandoned` (`fact_service_metrics.view.lkml:401`) **não filtra canal** — por isso esta
-measure também não tem policy de canal. Fórmula verbatim do `kb.md`:
+measure não tem policy de **canal**. Já o filtro de **área** vem do tile, não da measure, e todas
+as queries validadas da KB (Q2, Q5, `rel-abandono-cdp-vs-csp`) aplicam o escopo padrão — por isso
+a policy `escopo-area-atendimento`. Atenção: os tiles de abandono do dashboard 220 usam **outro**
+escopo de área — ver `abandono-do-592-usa-area-com-rt`. Fórmula verbatim do `kb.md`:
 
 ```sql
 SUM(count_of_abandoned) / NULLIF(SUM(count_of_demanded), 0)
@@ -1063,13 +1112,15 @@ title: Volume de avaliações da Cami
 source: dim_chatbot
 unit: count
 expr: SUM(sum_of_total_ratings)
-policies: [escopo-servir, escopo-csat-retidos]
+policies: [escopo-servir]
 direction: neutral
-pitfalls: [fin-ai-concentra-as-avaliacoes-cami, volume-de-avaliacoes-cami-muda-com-reprocessamento]
+pitfalls: [csat-cami-nao-filtra-csat-type, fin-ai-concentra-as-avaliacoes-cami, volume-de-avaliacoes-cami-muda-com-reprocessamento]
 status: stable
 ```
 
-Denominador do CSAT Cami e base para julgar se uma quebra por `bot_type` tem amostra suficiente.
+Measure `dim_chatbot.count_of_total_ratings` (`dim_chatbot.view.lkml:200`) — soma pura, **sem**
+filtro de `csat_type`. Denominador do CSAT Cami e base para julgar se uma quebra por `bot_type`
+tem amostra suficiente. Para o volume só de retidos, aplique `escopo-csat-retidos` por cima.
 
 ```yaml meta
 kind: measure
@@ -1381,7 +1432,7 @@ kind: report
 id: rel-csat-blended-pme-definicao
 title: CSAT Blended PME / Parceiro — bloco de definição
 sources: [fact_service_metrics, dim_chatbot]
-measures: [csat-blended, csat-humano, csat-cami]
+measures: [csat-blended, csat-humano, csat-cami-retidos]
 policies: [escopo-area-atendimento, escopo-servir, escopo-csat-retidos, segmento-pme-legado]
 status: stable
 ```
@@ -1637,7 +1688,7 @@ kind: report
 id: rel-csat-blended-pme-e-parceiro
 title: Q3 — CSAT Blended PME e Parceiro
 sources: [fact_service_metrics, dim_chatbot]
-measures: [csat-blended, csat-humano, csat-cami]
+measures: [csat-blended, csat-humano, csat-cami-retidos]
 policies: [escopo-area-atendimento, escopo-servir, escopo-csat-retidos, segmento-pme-legado, segmento-parceiro]
 params:
   - {name: inicio, type: date}
@@ -1732,7 +1783,7 @@ kind: report
 id: rel-csat-blended-pme-por-sub-segmento
 title: Q6 — CSAT Blended PME por sub-segmento (CDP / CSP)
 sources: [fact_service_metrics, dim_chatbot]
-measures: [csat-blended, csat-humano, csat-cami]
+measures: [csat-blended, csat-humano, csat-cami-retidos]
 policies: [escopo-area-atendimento, escopo-servir, escopo-csat-retidos, segmento-pme, segmento-pme-legado, segmento-cliente-do-parceiro, segmento-cliente-sem-parceiro]
 params:
   - {name: inicio, type: date}
@@ -1790,7 +1841,7 @@ kind: report
 id: rel-csat-cami-pme-por-bot-type
 title: Q7 — CSAT Cami PME por bot_type e sub-segmento
 sources: [dim_chatbot]
-measures: [csat-cami-por-total-ratings, volume-avaliacoes-cami]
+measures: [csat-cami-retidos, volume-avaliacoes-cami]
 policies: [escopo-servir, escopo-csat-retidos, segmento-pme, segmento-cliente-do-parceiro, segmento-cliente-sem-parceiro]
 params:
   - {name: inicio, type: date}
@@ -2204,7 +2255,7 @@ kind: report
 id: rel-csat-parceiros-blended-humano-cami
 title: CSAT Blended + Humano + Cami — Parceiros
 sources: [fact_service_metrics, dim_chatbot]
-measures: [csat-blended, csat-humano, csat-cami]
+measures: [csat-blended, csat-humano, csat-cami-retidos]
 policies: [escopo-area-atendimento, escopo-servir, escopo-csat-retidos, segmento-parceiro]
 params:
   - {name: inicio, type: date}
@@ -2426,15 +2477,43 @@ Bot_Fin. Hoje ele é **99% do volume** (jul/26: 41.772 de 42.135 interações do
 
 ```yaml meta
 kind: pitfall
-id: csat-type-cria-multiplas-linhas
+id: csat-type-e-um-por-thread
 severity: high
 applies_to: [dim_chatbot, csat-cami]
-enforced_by: escopo-csat-retidos
 ```
 
-`csat_type` cria múltiplas linhas: cada thread pode ter até 3 (`N/I` + `csat_retidos` +
-`csat_transbordados`). Para contar **sessões únicas** use apenas `csat_type = 'N/I'`; para
-**CSAT** use `csat_type = 'csat_retidos'`.
+**`csat_type` é UM por thread — não filtre `N/I` para contar sessões.** Cada thread tem
+**exatamente 1 linha**, com um único `csat_type` (`N/I` = sessão sem avaliação;
+`csat_retidos`/`csat_transbordados`/`csat_desistente` = sessão avaliada; NULL raro). A regra
+antiga ("cada thread pode ter até 3 linhas; sessões únicas = filtrar `csat_type = 'N/I'`") **não
+descreve os dados atuais** — verificado no BigQuery em 31/08/2026 (set/25–ago/26: 661.797 linhas
+= 661.797 threads, máx. 1 linha/thread); possivelmente mudou com o reprocessamento retroativo
+(`tabelas-reprocessadas-retroativamente`). Para contar **sessões/threads**: `COUNT(*)`
+(= `COUNT(DISTINCT thread_uid)`) com `escopo-servir` e **sem** filtro de `csat_type` — filtrar
+`N/I` descarta as threads avaliadas e **subconta** (~36% na janela de 12 meses; ~6% em jul/26).
+Para CSAT e contagens de avaliações, o oficial **também não filtra** `csat_type` — ver
+`csat-cami-nao-filtra-csat-type`.
+
+```yaml meta
+kind: pitfall
+id: csat-cami-nao-filtra-csat-type
+severity: high
+applies_to: [csat-cami, csat-cami-retidos, avaliacoes-positivas-cami, avaliacoes-negativas-cami, volume-avaliacoes-cami, dim_chatbot]
+```
+
+**O CSAT oficial do bot NÃO filtra `csat_type` — e filtrar não "limpa" nada.** A measure
+`dim_chatbot.csat` do LookML (`dim_chatbot.view.lkml:250`) é
+`count_of_positive_ratings / count_of_total_ratings`, soma pura; as measures de contagem
+(`count_of_positive_ratings`:184, `count_of_negative_ratings`:192, `count_of_total_ratings`:200)
+idem. **Nenhum dos 26 tiles do dashboard 210 filtra `csat_type`** (verificado ao vivo em
+31/08/2026). As linhas `N/I` têm **zero** avaliações, então já não afetam somas — o que o filtro
+`csat_type = 'csat_retidos'` remove são avaliações **reais** de transbordados e desistentes. O
+impacto é instável no tempo: hoje ~0,5–1pp (jun/26: 75,51% só-retidos vs 74,58% oficial), mas até
+mar/26 `csat_transbordados` concentrava ~80% das avaliações e a diferença chegou a **12pp**
+(fev/26: 88,01% vs 76,09%; set/25: 62,83% vs 73,33%) — uma série longa com o filtro fica errada.
+Para restringir a linhas avaliadas, o jeito oficial é a dimensão LookML `has_rating`
+(`dim_chatbot.view.lkml:160`, usada no tile 5690), que não altera somas. O recorte só-retidos é
+legítimo como variante (`csat-cami-retidos`, é o que o deck WOW usa) — **não** como default.
 
 ```yaml meta
 kind: pitfall
@@ -2608,6 +2687,24 @@ canal vazio, não `Telefone`).
 
 ```yaml meta
 kind: pitfall
+id: abandono-do-592-usa-area-com-rt
+severity: medium
+applies_to: [percentual-abandono, demanda-abandonada, fact_service_metrics]
+```
+
+**Os tiles de abandono do dashboard 220 (Gerencial 592) NÃO usam o escopo de área padrão.** Os
+tiles `% Abandono por área` (5162) e `Abandono total` (5290) filtram `area = BK,DN,EC,RT` —
+**incluem RT** (Retenção) e **excluem** `SAC - CA`/`SAC - Pessoalize`, o inverso do
+`escopo-area-atendimento`. E o dashboard não é consistente consigo mesmo: `% Abandono por canal`
+(5178) usa `BK,DN,EC`; `Abandono e Capacity` (18993) usa `BK,EC,DN,SAC - Pessoalize,SAC - CA,
+Ouvidoria - IP`; o tile `Demanda` (20107) calcula `percent_of_abandoned` **sem** filtro de área.
+Consequência: o abandono lido num tile do 592 pode não bater com a measure calculada no escopo
+padrão — a divergência é do **filtro do tile**, não da fórmula. Ao comparar com o dashboard,
+identifique primeiro **qual tile** e reproduza o filtro dele. (Fato verificado ao vivo nos tiles
+do dashboard 220 via Looker em 31/08/2026 — não consta do `kb.md`.)
+
+```yaml meta
+kind: pitfall
 id: diferente-de-parceiro-nao-e-pme
 severity: high
 applies_to: [fact_service_metrics, dim_chatbot, segmento-pme-legado]
@@ -2691,7 +2788,7 @@ bot: Bot_Fin 41.772 · Gen3 CA Pro 299 · Gen3 CA Mais 60 · Gen2 4.
 kind: pitfall
 id: sum-of-total-ratings-como-denominador
 severity: medium
-applies_to: [csat-cami-por-total-ratings, rel-csat-cami-pme-por-bot-type]
+applies_to: [csat-cami, csat-cami-retidos, rel-csat-cami-pme-por-bot-type]
 ```
 
 Usar `sum_of_total_ratings` como denominador do CSAT Cami (= positivas + negativas), **não**
@@ -3073,10 +3170,26 @@ métrica de **Deflexão Cami** — é a mesma coisa. Calcula-se como
 kind: term
 id: transbordo
 aliases: [transferência para humano, sum_of_transfers, transbordados]
+quantified_by: transbordos-cami
 ```
 
 Passagem da conversa do bot para um encantador humano. É o numerador da não-retenção e a origem do
 `csat_transbordados`.
+
+```yaml meta
+kind: term
+id: retido-billing-dn
+aliases: [retido, não retido, retido Billing DN, subclassification]
+quantified_by: billing-dn-retidos
+scoped_by: escopo-billing-dono-de-negocio
+```
+
+No contexto de **Billing DN**, "retido" é o atendimento com
+`subclassification IN ('retido','retenção')` (cliente mantido na base); "não retido" é a
+negociação (`servir_churn_type IS NOT NULL`) que não terminou nessa subclassificação.
+**"Retenção" tem três sentidos nesta KB — não confundir**: (1) a retenção do bot
+(`retencao-cami`, deflexão); (2) a área/fluxo `RT` de Retenção de clientes (fora do escopo de
+Atendimento); (3) este "retido" do Billing DN.
 
 ```yaml meta
 kind: term
@@ -3105,8 +3218,8 @@ aliases: [csat_retidos]
 scoped_by: escopo-csat-retidos
 ```
 
-Avaliação deixada por cliente que o bot **reteve** (resolveu sem transbordar). É a base do CSAT
-Cami.
+Avaliação deixada por cliente que o bot **reteve** (resolveu sem transbordar). É a base da
+variante `csat-cami-retidos` — o CSAT oficial do LookML **não** filtra `csat_type`.
 
 ```yaml meta
 kind: term
@@ -3114,7 +3227,9 @@ id: csat-transbordados
 aliases: [csat_transbordados]
 ```
 
-Avaliação deixada por cliente que foi **transbordado** para humano. Não entra no CSAT Cami.
+Avaliação deixada por cliente que foi **transbordado** para humano. Entra no CSAT oficial do
+LookML (`csat-cami`); fica fora só do recorte `csat-cami-retidos`. Até mar/26 concentrava ~80%
+das avaliações — ver `csat-cami-nao-filtra-csat-type`.
 
 ```yaml meta
 kind: term
@@ -3171,6 +3286,19 @@ FALSE = "Não Possui", NULL = "Não Identificado" (categoria numerosa).
 
 ```yaml meta
 kind: term
+id: sem-tipo-de-cliente
+aliases: [Sem Tipo de Cliente, customer_type NULL]
+```
+
+Rótulo dado a `customer_type IS NULL` via `COALESCE` na segmentação do Telefone
+(`rel-telefone-suporte-premium`). **Não é segmento de negócio** — é ausência de classificação.
+Na `fact_service_metrics` são pouquíssimas linhas (6 em jun–jul/2026), mas concentram efeitos
+visíveis: o abandono total do canal Telefone vem majoritariamente delas — ver
+`abandono-telefone-vem-de-customer-type-nulo`. No `dim_chatbot` não há NULL em `customer_type`
+(jun–jul/2026); o valor análogo lá é o literal `'N/I'`.
+
+```yaml meta
+kind: term
 id: encantador
 aliases: [agente, atendente, HC, headcount]
 quantified_by: hc-liquido
@@ -3178,6 +3306,17 @@ quantified_by: hc-liquido
 
 Atendente humano do time Servir. O "HC Líquido" é a média diária de encantadores ativos no período,
 derivada de `is_active_workday`.
+
+```yaml meta
+kind: term
+id: tpr-tempo-de-primeira-resposta
+aliases: [TPR, sum_of_tpr, count_of_tpr_ok, count_of_tpr_nok]
+```
+
+Tempo de primeira resposta. A `fact_service_metrics` traz o acumulado (`sum_of_tpr`, em segundos)
+e a contagem de tickets dentro (`count_of_tpr_ok`) e fora (`count_of_tpr_nok`) do SLA.
+**Não há KPI de TPR definido nesta base** — se a pergunta for sobre TPR, responda com essa
+ausência em vez de derivar um KPI por conta própria a partir dessas colunas.
 
 ```yaml meta
 kind: term
