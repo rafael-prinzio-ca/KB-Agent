@@ -49,8 +49,11 @@ Parse a **última linha** da resposta como JSON (tolerante: se vier envolto em `
 1. **Leitura íntegra**: `kb_linhas_lidas` do JSON dentro de ±1 de `KB_LINHAS`. Divergiu → avise que a conversão pode ter sido feita sobre leitura parcial (flag, não abort).
 2. **Integridade estrutural** — rode o checker determinístico:
    ```bash
-   python scripts/check-kb-layer.py "knowledge-bases/<kb>/kb-layer.md" "knowledge-bases/<kb>/kb.md"
+   PY=""; for c in "py -3" "python3" "python"; do $c --version 2>/dev/null | grep -q "^Python 3" && { PY="$c"; break; }; done
+   $PY scripts/check-kb-layer.py "knowledge-bases/<kb>/kb-layer.md" "knowledge-bases/<kb>/kb.md"
    ```
+
+   **Resolva o interpretador antes de chamar o checker**: no Windows, `python` costuma ser o *stub* da Microsoft Store, que **não** é interpretador — chamá-lo direto imprime `Python was not found` e sai com erro, o que seria lido como reprovação do checker e dispararia a rodada de correção do item 3 à toa. Se `PY` ficar vazio, **não** trate como violação: reporte que o checker não pôde rodar (falta Python 3) e entregue o arquivo com a integridade marcada como não verificada.
    Ele valida, de forma determinística: `kind` entre os 7 válidos (`expectation` é reprovado), `id` no formato esperado e único, referências resolvidas (em lista inline **e** em lista YAML em bloco) e **cada query do `kb.md` presente verbatim** no layer — identidade, não contagem. Exit != 0 → mostre a saída inteira.
 
    **Guarde a linha `blocos por kind:` da saída** — é ela que alimenta o Passo 5.
